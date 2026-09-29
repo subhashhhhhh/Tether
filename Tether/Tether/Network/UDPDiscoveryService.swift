@@ -157,7 +157,13 @@ public final class UDPDiscoveryService: @unchecked Sendable {
         }
     }
 
+    private var lastDirectPresenceSent: [String: Date] = [:]
+
     public func sendDirectPresence(to host: String, tcpPort: Int = 1716) {
+        let last = lastDirectPresenceSent[host] ?? .distantPast
+        guard Date().timeIntervalSince(last) > 10 else { return }
+        lastDirectPresenceSent[host] = Date()
+
         let packet = DeviceIdentity.shared.toDeviceInfo(tcpPort: tcpPort).toUdpDiscoveryPacket()
         guard let data = try? packet.serialize() else { return }
 
@@ -167,11 +173,8 @@ public final class UDPDiscoveryService: @unchecked Sendable {
     }
 
     private func startBroadcasting() {
-        // Upstream announces itself on start and on every network change, and
-        // answers each discovery it hears. A phone that missed our start-up
-        // broadcast would otherwise stay unaware of us, so repeat fairly often.
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now(), repeating: .seconds(5))
+        timer.schedule(deadline: .now(), repeating: .seconds(60))
         timer.setEventHandler { [weak self] in
             self?.broadcastPresence()
         }
@@ -180,9 +183,6 @@ public final class UDPDiscoveryService: @unchecked Sendable {
     }
 
     private func getBroadcastAddresses() -> [String] {
-        // Interface broadcast addresses first: the limited broadcast address
-        // 255.255.255.255 has no route on some macOS configurations and fails with
-        // EHOSTUNREACH, so it is kept only as a fallback.
         var addresses: [String] = []
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
         guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else { return ["255.255.255.255"] }
@@ -206,7 +206,9 @@ public final class UDPDiscoveryService: @unchecked Sendable {
             }
         }
 
-        addresses.append("255.255.255.255")
+        if addresses.isEmpty {
+            addresses.append("255.255.255.255")
+        }
         return addresses
     }
 
@@ -214,8 +216,6 @@ public final class UDPDiscoveryService: @unchecked Sendable {
         guard socketFD >= 0 else { return }
         let targets = getBroadcastAddresses()
 
-        // Log the target set when it changes, so a misconfigured interface or a
-        // missing subnet broadcast address is visible without spamming every tick.
         if Set(targets) != lastLoggedBroadcastTargets {
             lastLoggedBroadcastTargets = Set(targets)
             TetherLog("[UDPDiscovery] Broadcasting discovery to \(targets.joined(separator: ", "))")
@@ -243,9 +243,7 @@ public final class UDPDiscoveryService: @unchecked Sendable {
                     sendto(self.socketFD, baseAddress, data.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
                 }
             }
-            // A failed discovery send used to be discarded, which made an
-            // unreachable peer look like a peer that was simply not answering.
-            if sent < 0 {
+            if sent < 0 && errno != EHOSTUNREACH && errno != ENETUNREACH {
                 TetherLog("[UDPDiscovery] Failed to send discovery to \(ip): errno \(errno)")
             }
         }

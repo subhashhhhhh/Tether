@@ -27,10 +27,29 @@ public final class DeviceIdentity: @unchecked Sendable {
         let p12URL = appSupport.appendingPathComponent("identity.p12")
         let certURL = appSupport.appendingPathComponent("certificate.pem")
         let keyURL = appSupport.appendingPathComponent("key.pem")
-        let configURL = appSupport.appendingPathComponent("device.json")
+
+        // Migration from previous KDEConnect installation if available
+        let oldAppSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("KDEConnect", isDirectory: true)
+        let oldCertURL = oldAppSupport.appendingPathComponent("certificate.pem")
+        let oldKeyURL = oldAppSupport.appendingPathComponent("key.pem")
+        let oldId = UserDefaults.standard.string(forKey: "kdeconnect_device_id")
+
+        if !FileManager.default.fileExists(atPath: keyURL.path) &&
+           FileManager.default.fileExists(atPath: oldKeyURL.path) &&
+           FileManager.default.fileExists(atPath: oldCertURL.path) {
+            try? FileManager.default.copyItem(at: oldCertURL, to: certURL)
+            try? FileManager.default.copyItem(at: oldKeyURL, to: keyURL)
+            Self.exportPKCS12(keyURL: keyURL, certURL: certURL, p12URL: p12URL)
+            if let oldId = oldId {
+                UserDefaults.standard.set(oldId, forKey: "tether_device_id")
+            }
+        }
 
         var id = UserDefaults.standard.string(forKey: "tether_device_id")
-        var name = UserDefaults.standard.string(forKey: "tether_device_name") ?? Host.current().localizedName ?? "Mac"
+        var name = UserDefaults.standard.string(forKey: "tether_device_name")
+            ?? UserDefaults.standard.string(forKey: "kdeconnect_device_name")
+            ?? Host.current().localizedName ?? "Mac"
 
         let p12Exists = FileManager.default.fileExists(atPath: p12URL.path)
 
@@ -60,7 +79,11 @@ public final class DeviceIdentity: @unchecked Sendable {
             options[kSecImportExportKeychain] = kc
         }
         var items: CFArray?
-        let status = SecPKCS12Import(p12Data as CFData, options as CFDictionary, &items)
+        var status = SecPKCS12Import(p12Data as CFData, options as CFDictionary, &items)
+        if status != errSecSuccess {
+            options[kSecImportExportPassphrase] = "kdeconnect"
+            status = SecPKCS12Import(p12Data as CFData, options as CFDictionary, &items)
+        }
 
         guard status == errSecSuccess,
               let array = items as? [[String: Any]],
@@ -76,9 +99,7 @@ public final class DeviceIdentity: @unchecked Sendable {
         self.secCertificate = certRef!
 
         // Resolve the private key once, here, so the cost of locating it in the
-        // keychain is not paid in the middle of a TLS handshake. On a cold process
-        // that lookup can block for tens of seconds, stalling whichever handshake
-        // happens to be first.
+        // keychain is not paid in the middle of a TLS handshake.
         var privateKey: SecKey?
         if SecIdentityCopyPrivateKey(identity, &privateKey) != errSecSuccess || privateKey == nil {
             fatalError("Failed to resolve the Tether identity's private key from the keychain")
@@ -96,31 +117,67 @@ public final class DeviceIdentity: @unchecked Sendable {
     private static func getOrCreateKeychain(at url: URL) -> SecKeychain? {
         var keychain: SecKeychain?
         let path = url.path
+        let password = "tether"
+        let passLen = UInt32(password.utf8.count)
+
         if FileManager.default.fileExists(atPath: path) {
             if SecKeychainOpen(path, &keychain) == errSecSuccess, let kc = keychain {
-                SecKeychainUnlock(kc, 10, "tether", true)
+                SecKeychainUnlock(kc, passLen, password, true)
+                var settings = SecKeychainSettings(
+                    version: 1,
+                    lockOnSleep: DarwinBoolean(false),
+                    useLockInterval: DarwinBoolean(false),
+                    lockInterval: 0
+                )
+                SecKeychainSetSettings(kc, &settings)
                 return kc
             }
         }
 
-        let status = SecKeychainCreate(path, 10, "tether", false, nil, &keychain)
+        // Save existing user search list before creating to prevent polluting global keychain list
+        var originalSearchList: CFArray?
+        SecKeychainCopyDomainSearchList(.user, &originalSearchList)
+
+        let status = SecKeychainCreate(path, passLen, password, false, nil, &keychain)
         if status == errSecSuccess, let kc = keychain {
-            SecKeychainUnlock(kc, 10, "tether", true)
+            SecKeychainUnlock(kc, passLen, password, true)
+            var settings = SecKeychainSettings(
+                version: 1,
+                lockOnSleep: DarwinBoolean(false),
+                useLockInterval: DarwinBoolean(false),
+                lockInterval: 0
+            )
+            SecKeychainSetSettings(kc, &settings)
+
+            // Restore domain search list so this dedicated keychain never prompts system-wide
+            if let list = originalSearchList {
+                SecKeychainSetDomainSearchList(.user, list)
+            }
             return kc
         }
         return nil
     }
 
+    private static func exportPKCS12(keyURL: URL, certURL: URL, p12URL: URL) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        let script = """
+        openssl pkcs12 -export -in "\(certURL.path)" -inkey "\(keyURL.path)" -out "\(p12URL.path)" -passout pass:tether
+        """
+        process.arguments = ["-c", script]
+        try? process.run()
+        process.waitUntilExit()
+    }
+
     private static func generateCertificates(deviceId: String, p12URL: URL, certURL: URL, keyURL: URL) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        
+
         let script = """
         openssl ecparam -name prime256v1 -genkey -noout -out "\(keyURL.path)" && \
         chmod 600 "\(keyURL.path)" && \
-        openssl req -new -x509 -key "\(keyURL.path)" -out "\(certURL.path)" -days 3650 -subj "/CN=\(deviceId)/O=Tether/OU=Tether" && \
-        openssl pkcs12 -export -in "\(certURL.path)" -inkey "\(keyURL.path)" -out "\(p12URL.path)" -passout pass:tether && \
-        security import "\(p12URL.path)" -P tether -A
+        openssl req -new -x509 -key "\(keyURL.path)" -out "\(certURL.path)" -days 3650 -subj "/CN=\(deviceId)/O=KDE/OU=KDE Connect" && \
+        openssl pkcs12 -export -in "\(certURL.path)" -inkey "\(keyURL.path)" -out "\(p12URL.path)" -passout pass:tether
         """
         process.arguments = ["-c", script]
 
@@ -144,3 +201,4 @@ public final class DeviceIdentity: @unchecked Sendable {
         )
     }
 }
+
