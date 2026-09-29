@@ -75,6 +75,15 @@ public final class DeviceIdentity: @unchecked Sendable {
         SecIdentityCopyCertificate(identity, &certRef)
         self.secCertificate = certRef!
 
+        // Resolve the private key once, here, so the cost of locating it in the
+        // keychain is not paid in the middle of a TLS handshake. On a cold process
+        // that lookup can block for tens of seconds, stalling whichever handshake
+        // happens to be first.
+        var privateKey: SecKey?
+        if SecIdentityCopyPrivateKey(identity, &privateKey) != errSecSuccess || privateKey == nil {
+            fatalError("Failed to resolve the Tether identity's private key from the keychain")
+        }
+
         // Read PEM
         self.certificatePEM = (try? String(contentsOf: certURL, encoding: .utf8)) ?? ""
 

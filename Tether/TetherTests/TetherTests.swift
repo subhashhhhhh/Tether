@@ -135,6 +135,69 @@ struct TetherTests {
         #expect(uploaderProgress.last.map { $0 >= 1.0 } == true)
     }
 
+    /// A packet type must be advertised in the direction it actually travels. The
+    /// peer refuses to send a type missing from our incoming set, and ignores what
+    /// we send if it is missing from our outgoing set.
+    @Test func testCapabilityDirections() throws {
+        let incoming = DeviceInfo.defaultIncomingCapabilities
+        let outgoing = DeviceInfo.defaultOutgoingCapabilities
+
+        for type in [
+            "kdeconnect.mpris",
+            "kdeconnect.systemvolume",
+            "kdeconnect.lock",
+            "kdeconnect.connectivity_report",
+            "kdeconnect.telephony"
+        ] {
+            #expect(incoming.contains(type), "\(type) must be receivable")
+        }
+
+        for type in [
+            "kdeconnect.mpris.request",
+            "kdeconnect.findmyphone.request",
+            "kdeconnect.systemvolume.request",
+            "kdeconnect.lock.request"
+        ] {
+            #expect(outgoing.contains(type), "\(type) must be sendable")
+        }
+
+        // Request/response pairs must not be conflated.
+        #expect(!incoming.contains("kdeconnect.mpris.request"))
+        #expect(!incoming.contains("kdeconnect.findmyphone.request"))
+        #expect(!outgoing.contains("kdeconnect.mpris"))
+        #expect(!outgoing.contains("kdeconnect.telephony"))
+    }
+
+    /// Nested JSON arrives shallowly typed through `AnyCodable`, so the object
+    /// accessors have to unwrap it by hand.
+    @Test func testNestedObjectAccessors() throws {
+        let json = """
+        {"id":1,"type":"kdeconnect.systemvolume","body":{"sinkList":[\
+        {"name":"Music","description":"Built-in","muted":false,"volume":42,"maxVolume":100,"enabled":true}\
+        ]}}
+        """
+        let packet = try NetworkPacket.unserialize(from: Data(json.utf8))
+
+        let sinks = packet.objectArray(for: "sinkList")
+        #expect(sinks.count == 1)
+        #expect(sinks.first?["name"] as? String == "Music")
+        #expect(sinks.first?["volume"] as? Int == 42)
+        #expect(sinks.first?["enabled"] as? Bool == true)
+
+        let strengthsJSON = """
+        {"id":2,"type":"kdeconnect.connectivity_report","body":{"signalStrengths":{\
+        "0":{"networkType":"LTE","signalStrength":3}\
+        }}}
+        """
+        let strengthsPacket = try NetworkPacket.unserialize(from: Data(strengthsJSON.utf8))
+        let strengths = strengthsPacket.object(for: "signalStrengths")
+        #expect(strengths?.count == 1)
+
+        let entry = strengths?["0"] as? [String: Any]
+        #expect(entry?["networkType"] as? String == "LTE")
+        #expect(entry?["signalStrength"] as? Int == 3)
+    }
+
     // MARK: - Helpers
 
     private func makeTemporaryPayload(bytes: Int) throws -> URL {

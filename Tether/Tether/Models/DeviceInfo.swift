@@ -69,6 +69,7 @@ public struct DeviceInfo: Codable, Sendable, Identifiable {
         self.tcpPort = tcpPort
     }
 
+    /// Packet types we accept. A peer only sends a type that appears here.
     public static let defaultIncomingCapabilities: Set<String> = [
         "kdeconnect.ping",
         "kdeconnect.notification",
@@ -76,9 +77,20 @@ public struct DeviceInfo: Codable, Sendable, Identifiable {
         "kdeconnect.notification.reply",
         "kdeconnect.clipboard",
         "kdeconnect.clipboard.connect",
-        "kdeconnect.battery"
+        "kdeconnect.battery",
+        // Media control: state reports from the peer's player.
+        "kdeconnect.mpris",
+        // Peer volume reporting.
+        "kdeconnect.systemvolume",
+        // Lock state reports.
+        "kdeconnect.lock",
+        // Cellular signal reports.
+        "kdeconnect.connectivity_report",
+        // Call and message events.
+        "kdeconnect.telephony"
     ]
 
+    /// Packet types we emit. A peer only accepts a type that appears here.
     public static let defaultOutgoingCapabilities: Set<String> = [
         "kdeconnect.ping",
         "kdeconnect.notification",
@@ -86,7 +98,15 @@ public struct DeviceInfo: Codable, Sendable, Identifiable {
         "kdeconnect.notification.reply",
         "kdeconnect.clipboard",
         "kdeconnect.clipboard.connect",
-        "kdeconnect.battery"
+        "kdeconnect.battery",
+        // Media transport and state queries.
+        "kdeconnect.mpris.request",
+        // Ring request.
+        "kdeconnect.findmyphone.request",
+        // Peer volume queries and changes.
+        "kdeconnect.systemvolume.request",
+        // Lock and lock-state requests.
+        "kdeconnect.lock.request"
     ]
 
     // Create UDP discovery packet

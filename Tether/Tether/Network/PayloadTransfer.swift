@@ -26,9 +26,14 @@ public enum PayloadPort {
     /// Upstream waits 30s for the receiver to connect before giving up.
     public static let acceptTimeout: TimeInterval = 30
 
-    /// Budget for the TLS handshake. Generous because a cold process can spend
-    /// several seconds resolving the signing identity before the handshake starts.
-    public static let handshakeTimeout: TimeInterval = 30
+    /// Budget for the TLS handshake.
+    ///
+    /// Deliberately large: the first server-side handshake in a fresh process can
+    /// spend ~25s evaluating the peer's self-signed certificate before completing.
+    /// In the running app the identity and trust state are already warm from
+    /// pairing, so a payload handshake normally finishes in milliseconds — this is
+    /// purely a safety net for the cold path.
+    public static let handshakeTimeout: TimeInterval = 60
 
     /// Maximum time with no forward progress during the byte stream itself.
     public static let ioStallTimeout: TimeInterval = 60
@@ -181,16 +186,22 @@ enum PayloadTLS {
     /// `errSSLClientCertRequested`, so the deadline here must be generous.
     static func handshake(_ ctx: SSLContext, deadline: Date, label: String) -> OSStatus {
         var status: OSStatus = errSSLWouldBlock
+        var iterations = 0
         while status == errSSLWouldBlock
             || status == errSSLPeerAuthCompleted
             || status == errSSLClientCertRequested {
             if Date() > deadline {
-                TetherLog("[PayloadTLS] \(label) handshake exceeded deadline (last status \(status))")
+                TetherLog("[PayloadTLS] \(label) handshake exceeded deadline after \(iterations) iterations (last status \(status))")
                 return errSSLWouldBlock
             }
             status = SSLHandshake(ctx)
+            iterations += 1
+            if iterations <= 8 {
+                TetherLog("[PayloadTLS] \(label) SSLHandshake #\(iterations) -> \(status)")
+            }
             if status == errSSLWouldBlock { usleep(2000) }
         }
+        TetherLog("[PayloadTLS] \(label) handshake ok after \(iterations) iterations")
         return status
     }
 

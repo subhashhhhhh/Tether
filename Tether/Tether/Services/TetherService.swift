@@ -22,6 +22,12 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, TCPLis
     public let clipboardPlugin = ClipboardPlugin()
     public let notificationPlugin = NotificationPlugin()
     public let batteryPlugin = BatteryPlugin()
+    public let mediaControlPlugin = MediaControlPlugin()
+    public let findMyPhonePlugin = FindMyPhonePlugin()
+    public let lockDevicePlugin = LockDevicePlugin()
+    public let connectivityReportPlugin = ConnectivityReportPlugin()
+    public let telephonyPlugin = TelephonyPlugin()
+    public let remoteVolumePlugin = RemoteVolumePlugin()
 
     private let udpDiscovery = UDPDiscoveryService()
     private let tcpListener = TCPListenerService()
@@ -33,7 +39,18 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, TCPLis
     nonisolated(unsafe) private var activeDeviceIds = Set<String>()
 
     private init() {
-        self.plugins = [pingPlugin, clipboardPlugin, notificationPlugin, batteryPlugin]
+        self.plugins = [
+            pingPlugin,
+            clipboardPlugin,
+            notificationPlugin,
+            batteryPlugin,
+            mediaControlPlugin,
+            findMyPhonePlugin,
+            lockDevicePlugin,
+            connectivityReportPlugin,
+            telephonyPlugin,
+            remoteVolumePlugin
+        ]
         udpDiscovery.delegate = self
         tcpListener.delegate = self
     }
@@ -298,6 +315,37 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, TCPLis
         if let conn = connectedDevices[deviceId] {
             pingPlugin.sendPing(to: conn)
         }
+    }
+
+    // MARK: - Remote device actions
+
+    public func ringPhone(_ deviceId: String) {
+        guard let conn = connectedDevices[deviceId] else { return }
+        findMyPhonePlugin.ring(deviceId: deviceId, connection: conn)
+    }
+
+    public func lockPhone(_ deviceId: String) {
+        guard let conn = connectedDevices[deviceId] else { return }
+        lockDevicePlugin.lock(connection: conn)
+    }
+
+    public func mediaAction(_ action: String, deviceId: String) {
+        guard let conn = connectedDevices[deviceId] else { return }
+        mediaControlPlugin.sendAction(action, connection: conn)
+    }
+
+    public func setPhoneVolume(_ volume: Int, deviceId: String) {
+        guard let conn = connectedDevices[deviceId],
+              let sink = remoteVolumePlugin.sinks[deviceId]?.first(where: { $0.enabled })
+                ?? remoteVolumePlugin.sinks[deviceId]?.first else { return }
+        remoteVolumePlugin.setVolume(sinkName: sink.name, volume: volume, connection: conn)
+    }
+
+    /// Re-reads media and volume state, e.g. when the popover opens.
+    public func refreshRemoteState(deviceId: String) {
+        guard let conn = connectedDevices[deviceId] else { return }
+        mediaControlPlugin.requestState(connection: conn)
+        remoteVolumePlugin.requestSinks(connection: conn)
     }
 
     public func refreshDiscovery() {

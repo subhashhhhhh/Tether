@@ -9,10 +9,16 @@ public struct MenuBarView: View {
     @ObservedObject var service = TetherService.shared
     @ObservedObject var trustStore = TrustStore.shared
     @ObservedObject var batteryPlugin: BatteryPlugin
+    @ObservedObject var mediaPlugin: MediaControlPlugin
+    @ObservedObject var connectivityPlugin: ConnectivityReportPlugin
+    @ObservedObject var remoteVolumePlugin: RemoteVolumePlugin
     @Environment(\.openSettings) private var openSettings
 
     public init() {
         self.batteryPlugin = TetherService.shared.batteryPlugin
+        self.mediaPlugin = TetherService.shared.mediaControlPlugin
+        self.connectivityPlugin = TetherService.shared.connectivityReportPlugin
+        self.remoteVolumePlugin = TetherService.shared.remoteVolumePlugin
     }
 
     public var body: some View {
@@ -146,6 +152,10 @@ public struct MenuBarView: View {
         .frame(width: 290)
         .onAppear {
             service.refreshDiscovery()
+            // Pull fresh media/volume state each time the popover opens.
+            for deviceId in service.connectedDevices.keys {
+                service.refreshRemoteState(deviceId: deviceId)
+            }
         }
     }
 
@@ -153,6 +163,9 @@ public struct MenuBarView: View {
     private func deviceRow(for device: PairedDevice) -> some View {
         let isConnected = (service.connectedDevices[device.deviceId]?.isDisconnected == false)
         let battery = batteryPlugin.deviceBatteries[device.deviceId]
+        let signal = connectivityPlugin.signalStrength[device.deviceId]
+        let nowPlaying = mediaPlugin.nowPlaying[device.deviceId]
+        let sink = remoteVolumePlugin.sinks[device.deviceId]?.first(where: { $0.enabled })
 
         VStack(alignment: .leading, spacing: 4) {
             HStack {
@@ -164,6 +177,10 @@ public struct MenuBarView: View {
                     .foregroundColor(isConnected ? .primary : .secondary)
 
                 Spacer()
+
+                if let signal {
+                    signalBadge(for: signal)
+                }
 
                 if let batt = battery {
                     HStack(spacing: 3) {
@@ -193,6 +210,13 @@ public struct MenuBarView: View {
                     Spacer()
 
                     Menu {
+                        Button("Ring Phone") {
+                            service.ringPhone(device.deviceId)
+                        }
+                        Button("Lock Phone") {
+                            service.lockPhone(device.deviceId)
+                        }
+                        Divider()
                         Toggle("Clipboard Sync", isOn: Binding(
                             get: { device.isClipboardSyncEnabled },
                             set: { newValue in
@@ -224,8 +248,106 @@ public struct MenuBarView: View {
                     .frame(width: 20)
                 }
                 .padding(.leading, 24)
+
+                if let sink {
+                    volumeRow(for: device, sink: sink)
+                }
+
+                if let nowPlaying, nowPlaying.hasTrack {
+                    nowPlayingRow(for: device, state: nowPlaying)
+                }
             }
         }
         .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private func volumeRow(for device: PairedDevice, sink: AudioSink) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: sink.muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                .font(.system(size: 10))
+                .foregroundColor(.secondary)
+
+            Slider(
+                value: Binding(
+                    get: { sink.fraction },
+                    set: { service.setPhoneVolume(Int($0 * Double(sink.maxVolume)), deviceId: device.deviceId) }
+                ),
+                in: 0...1
+            )
+            .controlSize(.mini)
+        }
+        .padding(.leading, 24)
+    }
+
+    @ViewBuilder
+    private func nowPlayingRow(for device: PairedDevice, state: NowPlaying) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 4) {
+                Text(state.title)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer()
+                if !state.elapsedLabel.isEmpty {
+                    Text(state.elapsedLabel)
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            if !state.artist.isEmpty {
+                Text(state.artist)
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+
+            HStack(spacing: 10) {
+                Button(action: { service.mediaAction("Previous", deviceId: device.deviceId) }) {
+                    Image(systemName: "backward.fill")
+                }
+                .buttonStyle(.borderless)
+                .disabled(!state.canGoPrevious)
+
+                Button(action: {
+                    service.mediaAction(state.isPlaying ? "Pause" : "Play", deviceId: device.deviceId)
+                }) {
+                    Image(systemName: state.isPlaying ? "pause.fill" : "play.fill")
+                }
+                .buttonStyle(.borderless)
+
+                Button(action: { service.mediaAction("Next", deviceId: device.deviceId) }) {
+                    Image(systemName: "forward.fill")
+                }
+                .buttonStyle(.borderless)
+                .disabled(!state.canGoNext)
+
+                Spacer()
+            }
+            .font(.system(size: 11))
+        }
+        .padding(.leading, 24)
+        .padding(.top, 2)
+    }
+
+    /// Network type plus a four-bar strength indicator. Strength is reported on a
+    /// 0...4 scale, where 0 still means "connected, no bars".
+    @ViewBuilder
+    private func signalBadge(for signal: SignalStrength) -> some View {
+        HStack(spacing: 3) {
+            Text(signal.shortLabel)
+                .font(.system(size: 10, weight: .medium))
+
+            HStack(alignment: .bottom, spacing: 1) {
+                ForEach(0..<4, id: \.self) { index in
+                    RoundedRectangle(cornerRadius: 0.5)
+                        .fill(index < signal.strength ? Color.secondary : Color.secondary.opacity(0.25))
+                        .frame(width: 2, height: CGFloat(4 + index * 2))
+                }
+            }
+            .frame(height: 10, alignment: .bottom)
+        }
     }
 }

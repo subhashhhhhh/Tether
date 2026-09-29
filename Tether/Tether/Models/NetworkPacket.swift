@@ -127,6 +127,32 @@ public struct NetworkPacket: Codable, Sendable {
         return []
     }
 
+    /// Reads a nested JSON object.
+    ///
+    /// `AnyCodable` decodes nested containers shallowly, so the values inside come
+    /// back as plain `Any` rather than recursively wrapped.
+    public func object(for key: String) -> [String: Any]? {
+        body[key]?.value as? [String: Any]
+    }
+
+    /// Reads an array of nested JSON objects.
+    public func objectArray(for key: String) -> [[String: Any]] {
+        if let array = body[key]?.value as? [[String: Any]] {
+            return array
+        }
+        // `AnyCodable` decodes a nested array as [Any] holding [String: Any].
+        if let array = body[key]?.value as? [Any] {
+            return array.compactMap { $0 as? [String: Any] }
+        }
+        // Some peers send the array as a JSON-encoded string.
+        if let encoded = body[key]?.value as? String,
+           let data = encoded.data(using: .utf8),
+           let array = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+            return array
+        }
+        return []
+    }
+
     // Packet serialization
     public func serialize() throws -> Data {
         let encoder = JSONEncoder()
