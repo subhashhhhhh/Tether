@@ -10,6 +10,8 @@ struct TetherApp: App {
     @StateObject private var service = TetherService.shared
 
     init() {
+        // Eagerly initialize identity on main thread
+        _ = DeviceIdentity.shared
         // Start background discovery and network services
         TetherService.shared.start()
     }

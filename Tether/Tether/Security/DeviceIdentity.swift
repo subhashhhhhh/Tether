@@ -66,17 +66,21 @@ public final class DeviceIdentity: @unchecked Sendable {
         self.deviceId = id!
         self.deviceName = name
 
-        // Get or create dedicated private keychain to avoid touching login.keychain
-        let keychainURL = appSupport.appendingPathComponent("tether.keychain-db")
-        let dedicatedKeychain = Self.getOrCreateKeychain(at: keychainURL)
+        // Remove any legacy on-disk keychain that caused password prompts
+        let legacyKeychainURL = appSupport.appendingPathComponent("tether.keychain-db")
+        try? FileManager.default.removeItem(at: legacyKeychainURL)
 
-        // Load PKCS12 into dedicated keychain
+        // Create open access control so macOS never prompts for confirmation when using the identity
+        var access: SecAccess?
+        SecAccessCreate("Tether Identity" as CFString, nil, &access)
+
+        // Load PKCS12 into standard macOS login keychain with open access permissions
         let p12Data = (try? Data(contentsOf: p12URL)) ?? Data()
         var options: [CFString: Any] = [
             kSecImportExportPassphrase: "tether"
         ]
-        if let kc = dedicatedKeychain {
-            options[kSecImportExportKeychain] = kc
+        if let access = access {
+            options[kSecImportExportAccess] = access
         }
         var items: CFArray?
         var status = SecPKCS12Import(p12Data as CFData, options as CFDictionary, &items)
@@ -112,50 +116,6 @@ public final class DeviceIdentity: @unchecked Sendable {
         let certData = SecCertificateCopyData(self.secCertificate) as Data
         let digest = SHA256.hash(data: certData)
         self.certificateFingerprint = digest.map { String(format: "%02X", $0) }.joined(separator: ":")
-    }
-
-    private static func getOrCreateKeychain(at url: URL) -> SecKeychain? {
-        var keychain: SecKeychain?
-        let path = url.path
-        let password = "tether"
-        let passLen = UInt32(password.utf8.count)
-
-        if FileManager.default.fileExists(atPath: path) {
-            if SecKeychainOpen(path, &keychain) == errSecSuccess, let kc = keychain {
-                SecKeychainUnlock(kc, passLen, password, true)
-                var settings = SecKeychainSettings(
-                    version: 1,
-                    lockOnSleep: DarwinBoolean(false),
-                    useLockInterval: DarwinBoolean(false),
-                    lockInterval: 0
-                )
-                SecKeychainSetSettings(kc, &settings)
-                return kc
-            }
-        }
-
-        // Save existing user search list before creating to prevent polluting global keychain list
-        var originalSearchList: CFArray?
-        SecKeychainCopyDomainSearchList(.user, &originalSearchList)
-
-        let status = SecKeychainCreate(path, passLen, password, false, nil, &keychain)
-        if status == errSecSuccess, let kc = keychain {
-            SecKeychainUnlock(kc, passLen, password, true)
-            var settings = SecKeychainSettings(
-                version: 1,
-                lockOnSleep: DarwinBoolean(false),
-                useLockInterval: DarwinBoolean(false),
-                lockInterval: 0
-            )
-            SecKeychainSetSettings(kc, &settings)
-
-            // Restore domain search list so this dedicated keychain never prompts system-wide
-            if let list = originalSearchList {
-                SecKeychainSetDomainSearchList(.user, list)
-            }
-            return kc
-        }
-        return nil
     }
 
     private static func exportPKCS12(keyURL: URL, certURL: URL, p12URL: URL) {

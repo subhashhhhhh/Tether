@@ -25,7 +25,18 @@ public final class UDPDiscoveryService: @unchecked Sendable {
     private var lastLoggedBroadcastTargets = Set<String>()
     private var hasLoggedOutboundPacket = false
 
-    public init() {}
+    public init() {
+        if let lastIP = UserDefaults.standard.string(forKey: "tether_last_peer_ip") {
+            knownTargetIPs.insert(lastIP)
+        }
+        knownTargetIPs.insert("192.168.1.43")
+    }
+
+    public func addKnownTarget(ip: String) {
+        queue.async {
+            self.knownTargetIPs.insert(ip)
+        }
+    }
 
     public func start(listenPort: UInt16 = UDPDiscoveryService.defaultPort) {
         guard !isRunning else { return }
@@ -126,6 +137,7 @@ public final class UDPDiscoveryService: @unchecked Sendable {
         TetherLog("[UDPDiscovery] Received UDP discovery from: \(deviceInfo.deviceName) (\(deviceInfo.deviceId)) at \(senderIP):\(tcpPort)")
 
         knownTargetIPs.insert(senderIP)
+        UserDefaults.standard.set(senderIP, forKey: "tether_last_peer_ip")
 
         let isConnected = delegate?.isDeviceConnected(deviceId: deviceInfo.deviceId) ?? false
 
@@ -193,8 +205,9 @@ public final class UDPDiscoveryService: @unchecked Sendable {
             let isUp = (flags & IFF_UP) != 0
             let isRunning = (flags & IFF_RUNNING) != 0
             let isLoopback = (flags & IFF_LOOPBACK) != 0
+            let isBroadcast = (flags & IFF_BROADCAST) != 0
 
-            guard isUp && isRunning && !isLoopback else { continue }
+            guard isUp && isRunning && !isLoopback && isBroadcast else { continue }
             guard let addr = ptr.pointee.ifa_addr, addr.pointee.sa_family == sa_family_t(AF_INET) else { continue }
 
             if let broadaddr = ptr.pointee.ifa_dstaddr, broadaddr.pointee.sa_family == sa_family_t(AF_INET) {
@@ -214,7 +227,12 @@ public final class UDPDiscoveryService: @unchecked Sendable {
 
     private func sendBroadcastData(_ data: Data) {
         guard socketFD >= 0 else { return }
-        let targets = getBroadcastAddresses()
+        var targets = getBroadcastAddresses()
+        for ip in knownTargetIPs {
+            if !targets.contains(ip) {
+                targets.append(ip)
+            }
+        }
 
         if Set(targets) != lastLoggedBroadcastTargets {
             lastLoggedBroadcastTargets = Set(targets)
