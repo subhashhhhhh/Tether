@@ -22,6 +22,8 @@ public final class UDPDiscoveryService: @unchecked Sendable {
     private var isRunning = false
     private var knownTargetIPs = Set<String>()
     private var lastDirectResponse: [String: Date] = [:]
+    private var lastLoggedBroadcastTargets = Set<String>()
+    private var hasLoggedOutboundPacket = false
 
     public init() {}
 
@@ -144,6 +146,12 @@ public final class UDPDiscoveryService: @unchecked Sendable {
         let packet = DeviceIdentity.shared.toDeviceInfo(tcpPort: tcpPort).toUdpDiscoveryPacket()
         guard let data = try? packet.serialize() else { return }
 
+        if !hasLoggedOutboundPacket {
+            hasLoggedOutboundPacket = true
+            let json = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "<undecodable>"
+            TetherLog("[UDPDiscovery] Outbound discovery packet: \(json)")
+        }
+
         queue.async {
             self.sendBroadcastData(data)
         }
@@ -159,8 +167,11 @@ public final class UDPDiscoveryService: @unchecked Sendable {
     }
 
     private func startBroadcasting() {
+        // Upstream announces itself on start and on every network change, and
+        // answers each discovery it hears. A phone that missed our start-up
+        // broadcast would otherwise stay unaware of us, so repeat fairly often.
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now(), repeating: .seconds(60))
+        timer.schedule(deadline: .now(), repeating: .seconds(5))
         timer.setEventHandler { [weak self] in
             self?.broadcastPresence()
         }
@@ -169,9 +180,12 @@ public final class UDPDiscoveryService: @unchecked Sendable {
     }
 
     private func getBroadcastAddresses() -> [String] {
-        var addresses = ["255.255.255.255"]
+        // Interface broadcast addresses first: the limited broadcast address
+        // 255.255.255.255 has no route on some macOS configurations and fails with
+        // EHOSTUNREACH, so it is kept only as a fallback.
+        var addresses: [String] = []
         var ifaddr: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else { return addresses }
+        guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else { return ["255.255.255.255"] }
         defer { freeifaddrs(ifaddr) }
 
         for ptr in sequence(first: firstAddr, next: { $0.pointee.ifa_next }) {
@@ -191,12 +205,22 @@ public final class UDPDiscoveryService: @unchecked Sendable {
                 }
             }
         }
+
+        addresses.append("255.255.255.255")
         return addresses
     }
 
     private func sendBroadcastData(_ data: Data) {
         guard socketFD >= 0 else { return }
         let targets = getBroadcastAddresses()
+
+        // Log the target set when it changes, so a misconfigured interface or a
+        // missing subnet broadcast address is visible without spamming every tick.
+        if Set(targets) != lastLoggedBroadcastTargets {
+            lastLoggedBroadcastTargets = Set(targets)
+            TetherLog("[UDPDiscovery] Broadcasting discovery to \(targets.joined(separator: ", "))")
+        }
+
         for ip in targets {
             sendDatagram(data: data, toIP: ip)
         }
@@ -214,10 +238,15 @@ public final class UDPDiscoveryService: @unchecked Sendable {
 
         data.withUnsafeBytes { rawBuffer in
             guard let baseAddress = rawBuffer.baseAddress else { return }
-            withUnsafePointer(to: &targetAddr) {
+            let sent = withUnsafePointer(to: &targetAddr) {
                 $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                    _ = sendto(self.socketFD, baseAddress, data.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                    sendto(self.socketFD, baseAddress, data.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
                 }
+            }
+            // A failed discovery send used to be discarded, which made an
+            // unreachable peer look like a peer that was simply not answering.
+            if sent < 0 {
+                TetherLog("[UDPDiscovery] Failed to send discovery to \(ip): errno \(errno)")
             }
         }
     }

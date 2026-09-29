@@ -195,6 +195,18 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, TCPLis
                 }
             }
             self.pendingConnections.removeValue(forKey: "in_\(connection.host):\(connection.port)")
+
+            // If we dialled out and never completed a handshake, announce ourselves
+            // directly to the peer so it can dial back. Upstream does the same on any
+            // connection error, and it is what makes pairing work on networks where
+            // inbound connections to one of the two devices are blocked.
+            if connection.isOutgoing, connection.peerDeviceInfo == nil {
+                let listenPort = self.tcpListener.activePort == 0
+                    ? TCPListenerService.minPort
+                    : self.tcpListener.activePort
+                TetherLog("[TetherService] Outgoing connection to \(connection.host) failed; inviting a reverse connection on port \(listenPort)")
+                self.udpDiscovery.sendDirectPresence(to: connection.host, tcpPort: Int(listenPort))
+            }
         }
     }
 
