@@ -24,7 +24,10 @@ public final class NotificationPlugin: NSObject, TetherPlugin, UNUserNotificatio
 
     private func requestPermission() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
-            print("[NotificationPlugin] Notification authorization granted: \(granted)")
+            TetherLog("[NotificationPlugin] Notification authorization granted: \(granted)\(error != nil ? ", error: \(error!)" : "")")
+        }
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            TetherLog("[NotificationPlugin] Current notification authorization status: \(settings.authorizationStatus.rawValue) (0=notDetermined, 1=denied, 2=authorized, 3=provisional)")
         }
     }
 
@@ -140,7 +143,7 @@ public final class NotificationPlugin: NSObject, TetherPlugin, UNUserNotificatio
 
         UNUserNotificationCenter.current().add(request) { error in
             if let error = error {
-                print("[NotificationPlugin] Failed to display notification: \(error)")
+                TetherLog("[NotificationPlugin] Failed to display notification: \(error)")
             }
         }
     }
@@ -191,7 +194,7 @@ public final class NotificationPlugin: NSObject, TetherPlugin, UNUserNotificatio
                 ]
             )
             connection.send(packet: replyPacket)
-            print("[NotificationPlugin] Sent notification reply to \(deviceId): \(replyText)")
+            TetherLog("[NotificationPlugin] Sent notification reply to \(deviceId): \(replyText)")
         } else if response.actionIdentifier == "TETHER_DISMISS_ACTION" {
             if let notifId = userInfo["notifId"] as? String {
                 let dismissPacket = NetworkPacket(
@@ -199,7 +202,7 @@ public final class NotificationPlugin: NSObject, TetherPlugin, UNUserNotificatio
                     body: ["cancel": notifId]
                 )
                 connection.send(packet: dismissPacket)
-                print("[NotificationPlugin] Sent dismiss request for \(notifId)")
+                TetherLog("[NotificationPlugin] Sent dismiss request for \(notifId)")
             }
         }
 
