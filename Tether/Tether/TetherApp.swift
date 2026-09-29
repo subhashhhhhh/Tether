@@ -7,7 +7,7 @@ import SwiftUI
 
 @main
 struct TetherApp: App {
-    @StateObject private var service = TetherService.shared
+    @State private var appModel = TetherAppModel.shared
 
     init() {
         // Eagerly initialize identity on main thread
@@ -17,20 +17,8 @@ struct TetherApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra {
-            MenuBarView()
-        } label: {
-            let iconName: String = {
-                let hasPairedAndConnected = service.connectedDevices.values.contains { !$0.isDisconnected && $0.pairState == .paired }
-                if hasPairedAndConnected {
-                    return "iphone.badge.checkmark"
-                } else if service.isRunning {
-                    return "antenna.radiowaves.left.and.right"
-                } else {
-                    return "antenna.radiowaves.left.and.right.slash"
-                }
-            }()
-            Image(systemName: iconName)
+        MenuBarExtra("Tether", systemImage: appModel.statusIconName) {
+            MenuBarView(appModel: appModel)
         }
         .menuBarExtraStyle(.window)
 
@@ -39,8 +27,8 @@ struct TetherApp: App {
         }
 
         WindowGroup(id: "main") {
-            MainWindowView()
+            MainWindowView(appModel: appModel)
         }
-        .defaultSize(width: 820, height: 560)
+        .defaultSize(width: 860, height: 580)
     }
 }
