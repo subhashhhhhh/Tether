@@ -29,7 +29,9 @@ public final class BatteryPlugin: ObservableObject, KDEConnectPlugin, @unchecked
     public func onDisconnected(connection: DeviceConnection) {
         if let id = connection.peerDeviceInfo?.deviceId {
             DispatchQueue.main.async {
-                self.deviceBatteries.removeValue(forKey: id)
+                if !KDEConnectService.shared.isDeviceConnected(deviceId: id) {
+                    self.deviceBatteries.removeValue(forKey: id)
+                }
             }
         }
     }

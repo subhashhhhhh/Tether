@@ -29,6 +29,8 @@ public final class KDEConnectService: ObservableObject, UDPDiscoveryDelegate, TC
     private var connectingDeviceIds = Set<String>()
     private var pendingConnections: [String: DeviceConnection] = [:]
     private var plugins: [KDEConnectPlugin] = []
+    nonisolated(unsafe) private let connectionLock = NSLock()
+    nonisolated(unsafe) private var activeDeviceIds = Set<String>()
 
     private init() {
         self.plugins = [pingPlugin, clipboardPlugin, notificationPlugin, batteryPlugin]
@@ -62,10 +64,19 @@ public final class KDEConnectService: ObservableObject, UDPDiscoveryDelegate, TC
         connectedDevices.removeAll()
         discoveredDevices.removeAll()
         connectingDeviceIds.removeAll()
+        connectionLock.withLock {
+            activeDeviceIds.removeAll()
+        }
         KDLog("[KDEConnectService] Service stopped.")
     }
 
     // MARK: - UDP Discovery Delegate
+    nonisolated public func isDeviceConnected(deviceId: String) -> Bool {
+        connectionLock.withLock {
+            activeDeviceIds.contains(deviceId)
+        }
+    }
+
     nonisolated public func didDiscoverDevice(host: String, port: Int, deviceInfo: DeviceInfo) {
         Task { @MainActor in
             self.discoveredDeviceEndpoints[deviceInfo.deviceId] = (host, port)
@@ -79,7 +90,10 @@ public final class KDEConnectService: ObservableObject, UDPDiscoveryDelegate, TC
             }
 
             if !self.connectingDeviceIds.contains(deviceInfo.deviceId) {
-                self.connect(to: deviceInfo.deviceId, host: host, port: port)
+                // Only auto-connect if device is already paired in trustStore
+                if self.trustStore.isTrusted(deviceId: deviceInfo.deviceId) {
+                    self.connect(to: deviceInfo.deviceId, host: host, port: port)
+                }
             }
         }
     }
@@ -118,23 +132,22 @@ public final class KDEConnectService: ObservableObject, UDPDiscoveryDelegate, TC
             self.pendingConnections.removeValue(forKey: "out_\(id)")
             self.pendingConnections.removeValue(forKey: "in_\(connection.host):\(connection.port)")
 
-            if let old = self.connectedDevices[id], old !== connection {
-                // If old connection is actively awaiting pairing confirmation, do NOT drop it!
-                if old.pairState == .requested && !old.isDisconnected {
-                    KDLog("[KDEConnectService] Active connection is awaiting pairing response. Disconnecting redundant duplicate connection.")
-                    connection.disconnect()
-                    return
-                }
-
-                // If old connection is already paired and alive, keep it
-                if old.pairState == .paired && !old.isDisconnected {
-                    KDLog("[KDEConnectService] Active connection is already paired and healthy. Disconnecting redundant duplicate connection.")
-                    connection.disconnect()
-                    return
-                }
-
-                old.disconnect()
+            self.connectionLock.withLock {
+                self.activeDeviceIds.insert(id)
             }
+
+            if let old = self.connectedDevices[id], old !== connection {
+                KDLog("[KDEConnectService] Seamlessly replacing previous connection to \(id) with new active connection.")
+                self.connectedDevices[id] = connection
+                if connection.pairState == .paired {
+                    for plugin in self.plugins {
+                        plugin.onConnected(connection: connection)
+                    }
+                }
+                old.disconnect()
+                return
+            }
+
             self.connectedDevices[id] = connection
 
             // IMPORTANT: Only activate plugins if the device is already paired!
@@ -154,15 +167,17 @@ public final class KDEConnectService: ObservableObject, UDPDiscoveryDelegate, TC
                 self.connectingDeviceIds.remove(id)
                 self.pendingConnections.removeValue(forKey: "out_\(id)")
                 if self.connectedDevices[id] === connection {
+                    self.connectionLock.withLock {
+                        self.activeDeviceIds.remove(id)
+                    }
                     self.connectedDevices.removeValue(forKey: id)
+                    for plugin in self.plugins {
+                        plugin.onDisconnected(connection: connection)
+                    }
+                    KDLog("[KDEConnectService] Disconnected from \(connection.peerDeviceInfo?.deviceName ?? id)")
                 }
             }
             self.pendingConnections.removeValue(forKey: "in_\(connection.host):\(connection.port)")
-
-            for plugin in self.plugins {
-                plugin.onDisconnected(connection: connection)
-            }
-            KDLog("[KDEConnectService] Disconnected from \(connection.peerDeviceInfo?.deviceName ?? id ?? "unknown")")
         }
     }
 
@@ -235,6 +250,9 @@ public final class KDEConnectService: ObservableObject, UDPDiscoveryDelegate, TC
 
     public func unpair(deviceId: String) {
         dismissPairingRequestNotification(deviceId: deviceId)
+        connectionLock.withLock {
+            activeDeviceIds.remove(deviceId)
+        }
         if let conn = connectedDevices[deviceId] {
             conn.unpair()
             for plugin in self.plugins {

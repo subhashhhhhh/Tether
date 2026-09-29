@@ -94,6 +94,7 @@ public struct DeviceInfo: Codable, Sendable, Identifiable {
         var body: [String: Any] = [
             "deviceId": deviceId,
             "deviceName": deviceName,
+            "deviceType": deviceType.rawValue,
             "protocolVersion": protocolVersion
         ]
         if let port = tcpPort {
@@ -107,6 +108,7 @@ public struct DeviceInfo: Codable, Sendable, Identifiable {
         let body: [String: Any] = [
             "deviceId": deviceId,
             "deviceName": deviceName,
+            "deviceType": deviceType.rawValue,
             "protocolVersion": protocolVersion,
             "targetDeviceId": targetDeviceId,
             "targetProtocolVersion": targetProtocolVersion

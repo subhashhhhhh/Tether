@@ -62,23 +62,8 @@ public final class ClipboardPlugin: KDEConnectPlugin, @unchecked Sendable {
         }
 
         lock.withLock {
-            guard !activeConnections.contains(where: { $0 === connection }) else { return }
+            activeConnections.removeAll { $0.peerDeviceInfo?.deviceId == deviceId }
             activeConnections.append(connection)
-        }
-
-        // Only send clipboard.connect if we actually have a local clipboard copied after app started
-        if lastLocalClipboardTimestamp > 0,
-           let currentText = NSPasteboard.general.string(forType: .string),
-           !currentText.isEmpty {
-            lastSentContent = currentText
-            let packet = NetworkPacket(
-                type: "kdeconnect.clipboard.connect",
-                body: [
-                    "content": currentText,
-                    "timestamp": lastLocalClipboardTimestamp
-                ]
-            )
-            connection.send(packet: packet)
         }
     }
 

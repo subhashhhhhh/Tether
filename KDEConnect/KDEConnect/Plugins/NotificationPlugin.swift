@@ -90,7 +90,9 @@ public final class NotificationPlugin: NSObject, KDEConnectPlugin, UNUserNotific
 
     public func onDisconnected(connection: DeviceConnection) {
         if let deviceId = connection.peerDeviceInfo?.deviceId {
-            activeConnections.removeValue(forKey: deviceId)
+            if activeConnections[deviceId] === connection {
+                activeConnections.removeValue(forKey: deviceId)
+            }
         }
     }
 

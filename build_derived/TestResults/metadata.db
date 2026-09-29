@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>FormatVersion</key>
+	<integer>1</integer>
+	<key>Store</key>
+	<dict>
+		<key>KDEConnectTests</key>
+		<dict>
+			<key>KDEConnectTests</key>
+			<dict>
+				<key>testDeviceIdentity</key>
+				<dict>
+					<key>mrnet</key>
+					<real>0.00055193901062011719</real>
+				</dict>
+				<key>testDeviceInfoPacketConversion</key>
+				<dict>
+					<key>mrnet</key>
+					<real>0.00035715103149414062</real>
+				</dict>
+				<key>testNetworkPacketSerialization</key>
+				<dict>
+					<key>mrnet</key>
+					<real>0.00036191940307617188</real>
+				</dict>
+				<key>testTrustStoreOperations</key>
+				<dict>
+					<key>mrnet</key>
+					<real>0.0015838146209716797</real>
+				</dict>
+			</dict>
+		</dict>
+		<key>KDEConnectUITests</key>
+		<dict>
+			<key>KDEConnectUITests</key>
+			<dict>
+				<key>testExample</key>
+				<dict>
+					<key>mrnet</key>
+					<real>1.8539669513702393</real>
+				</dict>
+				<key>testLaunchPerformance</key>
+				<dict>
+					<key>mrnet</key>
+					<real>17.153491973876953</real>
+				</dict>
+			</dict>
+		</dict>
+	</dict>
+</dict>
+</plist>

@@ -8,6 +8,7 @@ import Darwin
 
 public protocol UDPDiscoveryDelegate: AnyObject, Sendable {
     func didDiscoverDevice(host: String, port: Int, deviceInfo: DeviceInfo)
+    func isDeviceConnected(deviceId: String) -> Bool
 }
 
 public final class UDPDiscoveryService: @unchecked Sendable {
@@ -124,11 +125,16 @@ public final class UDPDiscoveryService: @unchecked Sendable {
 
         knownTargetIPs.insert(senderIP)
 
-        // Only send direct unicast presence if we haven't responded to this sender recently
-        let lastSent = lastDirectResponse[senderIP] ?? .distantPast
-        if Date().timeIntervalSince(lastSent) > 15 {
-            lastDirectResponse[senderIP] = Date()
-            sendDirectPresence(to: senderIP)
+        let isConnected = delegate?.isDeviceConnected(deviceId: deviceInfo.deviceId) ?? false
+
+        // Only send direct unicast presence if the device is NOT already actively connected
+        // and we haven't responded to this sender recently
+        if !isConnected {
+            let lastSent = lastDirectResponse[senderIP] ?? .distantPast
+            if Date().timeIntervalSince(lastSent) > 30 {
+                lastDirectResponse[senderIP] = Date()
+                sendDirectPresence(to: senderIP)
+            }
         }
 
         delegate?.didDiscoverDevice(host: senderIP, port: tcpPort, deviceInfo: deviceInfo)
@@ -154,7 +160,7 @@ public final class UDPDiscoveryService: @unchecked Sendable {
 
     private func startBroadcasting() {
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now(), repeating: .seconds(15))
+        timer.schedule(deadline: .now(), repeating: .seconds(60))
         timer.setEventHandler { [weak self] in
             self?.broadcastPresence()
         }
@@ -190,12 +196,7 @@ public final class UDPDiscoveryService: @unchecked Sendable {
 
     private func sendBroadcastData(_ data: Data) {
         guard socketFD >= 0 else { return }
-        var targets = getBroadcastAddresses()
-        for ip in knownTargetIPs {
-            if !targets.contains(ip) {
-                targets.append(ip)
-            }
-        }
+        let targets = getBroadcastAddresses()
         for ip in targets {
             sendDatagram(data: data, toIP: ip)
         }

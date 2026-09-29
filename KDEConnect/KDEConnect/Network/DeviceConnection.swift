@@ -11,36 +11,87 @@ import CryptoKit
 private func kdeSSLRead(connection: SSLConnectionRef, data: UnsafeMutableRawPointer, dataLength: UnsafeMutablePointer<Int>) -> OSStatus {
     let fd = Int32(bitPattern: UInt32(UInt(bitPattern: connection)))
     let requested = dataLength.pointee
-    let bytesRead = Darwin.read(fd, data, requested)
-    if bytesRead > 0 {
-        dataLength.pointee = bytesRead
-        return noErr
-    } else if bytesRead == 0 {
-        dataLength.pointee = 0
-        return OSStatus(errSSLClosedGraceful)
-    } else {
-        if errno == EAGAIN || errno == EWOULDBLOCK {
-            dataLength.pointee = 0
-            return OSStatus(errSSLWouldBlock)
+    var totalRead = 0
+    var ptr = data
+
+    while totalRead < requested {
+        let n = Darwin.read(fd, ptr, requested - totalRead)
+        if n > 0 {
+            totalRead += n
+            ptr = ptr.advanced(by: n)
+        } else if n == 0 {
+            // EOF: peer closed socket
+            dataLength.pointee = totalRead
+            return totalRead == requested ? noErr : (totalRead > 0 ? OSStatus(errSSLWouldBlock) : OSStatus(errSSLClosedGraceful))
+        } else {
+            let err = errno
+            if err == EINTR {
+                continue
+            }
+            if err == EAGAIN || err == EWOULDBLOCK {
+                // If we already started reading a TLS record, wait briefly for remaining segment
+                if totalRead > 0 {
+                    var pollFd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+                    let pollRes = Darwin.poll(&pollFd, 1, 10)
+                    if pollRes > 0 && (pollFd.revents & Int16(POLLIN)) != 0 {
+                        continue
+                    }
+                }
+                dataLength.pointee = totalRead
+                return OSStatus(errSSLWouldBlock)
+            } else if err == ECONNRESET || err == EPIPE || err == ENOTCONN || err == ESHUTDOWN {
+                dataLength.pointee = totalRead
+                return totalRead > 0 ? OSStatus(errSSLWouldBlock) : OSStatus(errSSLClosedGraceful)
+            }
+            dataLength.pointee = totalRead
+            return OSStatus(errSSLClosedAbort)
         }
-        return OSStatus(errSSLClosedAbort)
     }
+
+    dataLength.pointee = totalRead
+    return noErr
 }
 
 private func kdeSSLWrite(connection: SSLConnectionRef, data: UnsafeRawPointer, dataLength: UnsafeMutablePointer<Int>) -> OSStatus {
     let fd = Int32(bitPattern: UInt32(UInt(bitPattern: connection)))
     let requested = dataLength.pointee
-    let bytesWritten = Darwin.write(fd, data, requested)
-    if bytesWritten > 0 {
-        dataLength.pointee = bytesWritten
-        return noErr
-    } else {
-        if errno == EAGAIN || errno == EWOULDBLOCK {
-            dataLength.pointee = 0
-            return OSStatus(errSSLWouldBlock)
+    var totalWritten = 0
+    var ptr = data
+
+    while totalWritten < requested {
+        let n = Darwin.write(fd, ptr, requested - totalWritten)
+        if n > 0 {
+            totalWritten += n
+            ptr = ptr.advanced(by: n)
+        } else if n == 0 {
+            dataLength.pointee = totalWritten
+            return totalWritten == requested ? noErr : OSStatus(errSSLClosedGraceful)
+        } else {
+            let err = errno
+            if err == EINTR {
+                continue
+            }
+            if err == EAGAIN || err == EWOULDBLOCK {
+                if totalWritten > 0 {
+                    var pollFd = pollfd(fd: fd, events: Int16(POLLOUT), revents: 0)
+                    let pollRes = Darwin.poll(&pollFd, 1, 10)
+                    if pollRes > 0 && (pollFd.revents & Int16(POLLOUT)) != 0 {
+                        continue
+                    }
+                }
+                dataLength.pointee = totalWritten
+                return OSStatus(errSSLWouldBlock)
+            } else if err == EPIPE || err == ECONNRESET || err == ESHUTDOWN {
+                dataLength.pointee = totalWritten
+                return OSStatus(errSSLClosedGraceful)
+            }
+            dataLength.pointee = totalWritten
+            return OSStatus(errSSLClosedAbort)
         }
-        return OSStatus(errSSLClosedAbort)
     }
+
+    dataLength.pointee = totalWritten
+    return noErr
 }
 
 public protocol DeviceConnectionDelegate: AnyObject, Sendable {
@@ -90,6 +141,10 @@ public final class DeviceConnection: @unchecked Sendable {
 
         var nosigpipe: Int32 = 1
         setsockopt(socketFD, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, socklen_t(MemoryLayout<Int32>.size))
+        var keepalive: Int32 = 1
+        setsockopt(socketFD, SOL_SOCKET, SO_KEEPALIVE, &keepalive, socklen_t(MemoryLayout<Int32>.size))
+        var keepaliveTime: Int32 = 10
+        setsockopt(socketFD, IPPROTO_TCP, TCP_KEEPALIVE, &keepaliveTime, socklen_t(MemoryLayout<Int32>.size))
     }
 
     deinit {
@@ -118,6 +173,10 @@ public final class DeviceConnection: @unchecked Sendable {
 
         var nosigpipe: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, socklen_t(MemoryLayout<Int32>.size))
+        var keepalive: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &keepalive, socklen_t(MemoryLayout<Int32>.size))
+        var keepaliveTime: Int32 = 10
+        setsockopt(fd, IPPROTO_TCP, TCP_KEEPALIVE, &keepaliveTime, socklen_t(MemoryLayout<Int32>.size))
 
         var tv = timeval(tv_sec: 5, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
@@ -222,8 +281,13 @@ public final class DeviceConnection: @unchecked Sendable {
         SSLSetIOFuncs(ctx, kdeSSLRead, kdeSSLWrite)
         SSLSetConnection(ctx, SSLConnectionRef(bitPattern: UInt(UInt32(bitPattern: socketFD))))
         SSLSetCertificate(ctx, [DeviceIdentity.shared.secIdentity] as CFArray)
-        SSLSetSessionOption(ctx, .breakOnServerAuth, true)
-        SSLSetSessionOption(ctx, .breakOnCertRequested, true)
+        if isServer {
+            SSLSetClientSideAuthenticate(ctx, .alwaysAuthenticate)
+            SSLSetSessionOption(ctx, .breakOnClientAuth, true)
+        } else {
+            SSLSetSessionOption(ctx, .breakOnServerAuth, true)
+            SSLSetSessionOption(ctx, .breakOnCertRequested, true)
+        }
 
         var status: OSStatus = errSSLWouldBlock
         let deadline = Date().addingTimeInterval(5.0)
@@ -273,7 +337,7 @@ public final class DeviceConnection: @unchecked Sendable {
     }
 
     private func readIncomingEncrypted() {
-        guard let ctx = sslContext else { return }
+        guard let ctx = sslContext, !isClosed else { return }
 
         while true {
             var buffer = [UInt8](repeating: 0, count: 8192)
@@ -286,23 +350,22 @@ public final class DeviceConnection: @unchecked Sendable {
                     if readBuffer.count > 1_000_000 {
                         readBuffer.removeAll()
                     }
-                    processReadBuffer()
                 }
-            }
-
-            // Check connection termination FIRST before checking wouldBlock or bytesRead == 0
-            if status == errSSLClosedGraceful || status == errSSLClosedAbort {
-                KDLog("[DeviceConnection] SSL connection closed by peer (status: \(status)) on socket \(socketFD)")
-                disconnect()
-                return
+                processReadBuffer()
             }
 
             if status == errSSLWouldBlock {
                 break
             }
 
+            if status == errSSLClosedGraceful || status == errSSLClosedAbort {
+                KDLog("[DeviceConnection] SSL connection closed gracefully/aborted by peer (status: \(status)) on socket \(socketFD)")
+                disconnect()
+                return
+            }
+
             if status != noErr {
-                KDLog("[DeviceConnection] SSLRead fatal error: \(status) on socket \(socketFD)")
+                KDLog("[DeviceConnection] SSLRead error: \(status) on socket \(socketFD)")
                 disconnect()
                 return
             }
@@ -314,12 +377,18 @@ public final class DeviceConnection: @unchecked Sendable {
     }
 
     private func processReadBuffer() {
-        while let newlineIndex = readBuffer.firstIndex(of: UInt8(ascii: "\n")) {
-            let lineData = readBuffer.subdata(in: 0..<newlineIndex)
-            readBuffer.removeSubrange(0...newlineIndex)
+        var linesToProcess: [Data] = []
+        lock.withLock {
+            while let newlineIndex = readBuffer.firstIndex(of: UInt8(ascii: "\n")) {
+                let lineData = readBuffer.subdata(in: 0..<newlineIndex)
+                readBuffer.removeSubrange(0...newlineIndex)
+                if !lineData.isEmpty {
+                    linesToProcess.append(lineData)
+                }
+            }
+        }
 
-            guard !lineData.isEmpty else { continue }
-
+        for lineData in linesToProcess {
             do {
                 let packet = try NetworkPacket.unserialize(from: lineData)
                 handlePacket(packet)
@@ -360,14 +429,27 @@ public final class DeviceConnection: @unchecked Sendable {
         guard let ctx = sslContext else { return }
         var trust: SecTrust?
         let status = SSLCopyPeerTrust(ctx, &trust)
-        guard status == noErr, let t = trust,
-              let certs = SecTrustCopyCertificateChain(t) as? [SecCertificate],
-              let peerCert = certs.first else {
-            KDLog("[DeviceConnection] Warning: Could not copy peer certificate (status: \(status))")
+        guard status == noErr, let t = trust else {
+            KDLog("[DeviceConnection] Warning: Could not copy peer trust (status: \(status))")
             return
         }
 
-        let certData = SecCertificateCopyData(peerCert) as Data
+        var peerCert: SecCertificate?
+        if let chain = SecTrustCopyCertificateChain(t) as? [SecCertificate], let first = chain.first {
+            peerCert = first
+        } else {
+            let count = SecTrustGetCertificateCount(t)
+            if count > 0 {
+                peerCert = SecTrustGetCertificateAtIndex(t, 0)
+            }
+        }
+
+        guard let cert = peerCert else {
+            KDLog("[DeviceConnection] Warning: Could not copy peer certificate from trust chain (status: \(status))")
+            return
+        }
+
+        let certData = SecCertificateCopyData(cert) as Data
         let digest = SHA256.hash(data: certData)
         let fingerprint = digest.map { String(format: "%02x", $0) }.joined(separator: ":")
         self.peerCertificateFingerprint = fingerprint
@@ -397,6 +479,15 @@ public final class DeviceConnection: @unchecked Sendable {
             switch pairState {
             case .requested:
                 // We requested and they accepted!
+                let timestamp = Int64(Date().timeIntervalSince1970)
+                let confirmPacket = NetworkPacket(
+                    type: "kdeconnect.pair",
+                    body: [
+                        "pair": true,
+                        "timestamp": timestamp
+                    ]
+                )
+                send(packet: confirmPacket)
                 completePairing()
             case .notPaired:
                 // They requested pairing with us
@@ -478,8 +569,12 @@ public final class DeviceConnection: @unchecked Sendable {
     }
 
     private func completePairing() {
-        guard let info = peerDeviceInfo, let fingerprint = peerCertificateFingerprint else { return }
+        guard let info = peerDeviceInfo else {
+            KDLog("[DeviceConnection] Cannot complete pairing: peerDeviceInfo is nil")
+            return
+        }
 
+        let fingerprint = peerCertificateFingerprint ?? TrustStore.shared.pairedDevice(for: info.deviceId)?.certificateFingerprint ?? ""
         self.pairState = .paired
         let pairedDevice = PairedDevice(
             deviceId: info.deviceId,
