@@ -17,7 +17,7 @@ public final class UDPDiscoveryService: @unchecked Sendable {
 
     private var socketFD: Int32 = -1
     private var readSource: DispatchSourceRead?
-    private let queue = DispatchQueue(label: "com.subhsh.tether.udp", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "com.subhashh.tether.udp", qos: .userInitiated)
     private var broadcastTimer: DispatchSourceTimer?
     private var isRunning = false
     private var knownTargetIPs = Set<String>()

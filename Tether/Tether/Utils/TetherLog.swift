@@ -7,7 +7,7 @@ import Foundation
 import os.log
 
 private let logFileURL = URL(fileURLWithPath: "/tmp/tether.log")
-private let logQueue = DispatchQueue(label: "com.subhsh.tether.log", qos: .utility)
+private let logQueue = DispatchQueue(label: "com.subhashh.tether.log", qos: .utility)
 private let dateFormatter: ISO8601DateFormatter = {
     let formatter = ISO8601DateFormatter()
     formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]

@@ -19,7 +19,7 @@ public final class TCPListenerService: @unchecked Sendable {
 
     private var serverFD: Int32 = -1
     private var readSource: DispatchSourceRead?
-    private let queue = DispatchQueue(label: "com.subhsh.tether.tcplistener", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "com.subhashh.tether.tcplistener", qos: .userInitiated)
     private var isRunning = false
 
     public init() {}

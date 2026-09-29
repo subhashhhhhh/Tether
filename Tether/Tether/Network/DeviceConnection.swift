@@ -129,7 +129,7 @@ public final class DeviceConnection: @unchecked Sendable {
         self.port = port
         self.targetDeviceId = targetDeviceId
         self.isOutgoing = isOutgoing
-        self.connectionQueue = DispatchQueue(label: "com.subhsh.tether.conn.\(host):\(port)", qos: .userInitiated)
+        self.connectionQueue = DispatchQueue(label: "com.subhashh.tether.conn.\(host):\(port)", qos: .userInitiated)
     }
 
     public init(socketFD: Int32, host: String, port: Int) {
@@ -137,7 +137,7 @@ public final class DeviceConnection: @unchecked Sendable {
         self.port = port
         self.isOutgoing = false
         self.socketFD = socketFD
-        self.connectionQueue = DispatchQueue(label: "com.subhsh.tether.conn.in.\(host):\(port)", qos: .userInitiated)
+        self.connectionQueue = DispatchQueue(label: "com.subhashh.tether.conn.in.\(host):\(port)", qos: .userInitiated)
 
         var nosigpipe: Int32 = 1
         setsockopt(socketFD, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, socklen_t(MemoryLayout<Int32>.size))

@@ -289,7 +289,7 @@ public final class PayloadUploader: @unchecked Sendable {
     /// reference right after `start` would silently stall the transfer.
     private var selfReference: PayloadUploader?
 
-    private let queue = DispatchQueue(label: "com.subhsh.tether.payload.upload", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "com.subhashh.tether.payload.upload", qos: .userInitiated)
 
     public init() {}
 
