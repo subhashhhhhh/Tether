@@ -2,7 +2,8 @@
 //  MenuBarView.swift
 //  Tether
 //
-//  Native macOS SwiftUI MenuBarExtra window view following Apple Design Guidelines.
+//  AirSync-inspired menu bar popover for Tether featuring segmented glass cards,
+//  live device status, media playback controls, and quick action buttons.
 //
 
 import SwiftUI
@@ -20,31 +21,39 @@ public struct MenuBarView: View {
     }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            headerSection
+        VStack(spacing: 8) {
+            // 1. Top Header Segment
+            topHeaderSegment
 
-            Divider()
-
+            // 2. Incoming Pairing Request Segment
             if let pairReq = appModel.incomingPairRequest {
-                pairingRequestBanner(for: pairReq)
-                Divider()
+                pairingRequestSegment(for: pairReq)
             }
 
-            pairedDevicesSection
+            // 3. Active Device Segment
+            if let connectedDevice = appModel.connectedDevices.first {
+                connectedDeviceSegment(for: connectedDevice)
 
+                // 4. Now Playing Media Segment (if music active)
+                if let title = connectedDevice.nowPlayingTitle, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    mediaPlayerSegment(for: connectedDevice)
+                }
+            } else if appModel.allDevices.isEmpty {
+                emptyDeviceSegment
+            }
+
+            // 5. Available Devices Segment
             if !appModel.availableDevices.isEmpty {
-                Divider()
-                availableDevicesSection
+                availableDevicesSegment
             }
 
-            Divider()
-
-            footerSection
+            // 6. Footer Segment
+            footerSegment
         }
         .padding(14)
-        .frame(width: 320)
+        .frame(width: 330)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .stroke(isDropTarget ? Color.accentColor : Color.clear, lineWidth: 2)
         )
         .onDrop(of: [.fileURL], isTargeted: $isDropTarget) { providers in
@@ -55,56 +64,55 @@ public struct MenuBarView: View {
         }
     }
 
-    // MARK: - Header
-    private var headerSection: some View {
-        HStack(alignment: .center) {
-            Label {
-                Text("Tether")
-                    .font(.headline)
-            } icon: {
-                Image(systemName: appModel.statusIconName)
-                    .foregroundColor(appModel.connectedDevices.isEmpty ? .secondary : .accentColor)
-            }
-            .labelStyle(.titleAndIcon)
+    // MARK: - Top Header Segment
+    private var topHeaderSegment: some View {
+        GlassCard(cornerRadius: 14, paddingAmount: 10) {
+            HStack(alignment: .center, spacing: 10) {
+                ZStack {
+                    Circle()
+                        .fill(Color.accentColor.opacity(0.18))
+                        .frame(width: 32, height: 32)
+                    Image(systemName: "iphone.badge.checkmark")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundColor(.accentColor)
+                }
 
-            Spacer()
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Tether")
+                        .font(.system(size: 14, weight: .bold))
+                    Text(appModel.connectedDevices.isEmpty ? (appModel.isRunning ? "Searching..." : "Offline") : "Online")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(appModel.connectedDevices.isEmpty ? .secondary : .green)
+                }
 
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(appModel.connectedDevices.isEmpty ? (appModel.isRunning ? Color.blue : Color.secondary) : Color.green)
-                    .frame(width: 7, height: 7)
-                Text(appModel.connectedDevices.isEmpty ? (appModel.isRunning ? "Searching" : "Offline") : "Online")
-                    .font(.caption2.weight(.medium))
-                    .foregroundColor(.secondary)
-            }
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel("Status: \(appModel.connectedDevices.isEmpty ? (appModel.isRunning ? "Searching for devices" : "Offline") : "Online")")
+                Spacer()
 
-            Button {
-                openSettings()
-                NSApp.activate(ignoringOtherApps: true)
-            } label: {
-                Image(systemName: "gearshape")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                GlassButtonView(
+                    label: "Open App",
+                    systemImage: "arrow.up.forward.app",
+                    circleSize: 30,
+                    fixedIconSize: 13,
+                    helpText: "Open Tether Main Window"
+                ) {
+                    openAndFocusMainWindow()
+                }
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Open Settings")
         }
     }
 
-    // MARK: - Pairing Request Banner
+    // MARK: - Pairing Request Segment
     @ViewBuilder
-    private func pairingRequestBanner(for request: PairRequestViewModel) -> some View {
-        GroupBox {
+    private func pairingRequestSegment(for request: PairRequestViewModel) -> some View {
+        GlassCard(cornerRadius: 14, paddingAmount: 12) {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     Image(systemName: "person.crop.circle.badge.plus")
-                        .font(.title3)
+                        .font(.system(size: 18))
                         .foregroundColor(.accentColor)
+
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Pairing Request")
-                            .font(.subheadline.weight(.semibold))
+                            .font(.system(size: 12, weight: .bold))
                         Text("\(request.deviceName) wants to connect")
                             .font(.caption)
                             .foregroundColor(.secondary)
@@ -112,10 +120,9 @@ public struct MenuBarView: View {
                 }
 
                 if let fp = request.fingerprint {
-                    Text("Fingerprint: \(fp.prefix(23))...")
+                    Text("Fingerprint: \(fp.prefix(20))...")
                         .font(.system(size: 9, design: .monospaced))
                         .foregroundColor(.secondary)
-                        .lineLimit(1)
                 }
 
                 HStack(spacing: 8) {
@@ -134,235 +141,227 @@ public struct MenuBarView: View {
                     .controlSize(.small)
                 }
             }
-            .padding(4)
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Incoming pairing request from \(request.deviceName)")
-    }
-
-    // MARK: - Paired Devices
-    private var pairedDevicesSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("PAIRED DEVICES")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(.secondary)
-
-            let pairedCount = appModel.connectedDevices.count + appModel.offlineDevices.count
-            if pairedCount == 0 {
-                VStack(spacing: 6) {
-                    Image(systemName: "iphone.slash")
-                        .font(.title2)
-                        .foregroundColor(.secondary)
-                        .padding(.top, 4)
-                    Text("No paired devices")
-                        .font(.subheadline.weight(.medium))
-                    Text("Open KDE Connect on your phone to pair.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.center)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
-                .accessibilityElement(children: .combine)
-            } else {
-                ForEach(appModel.connectedDevices) { device in
-                    connectedDeviceRow(for: device)
-                }
-                ForEach(appModel.offlineDevices) { device in
-                    offlineDeviceRow(for: device)
-                }
-            }
         }
     }
 
-    // MARK: - Connected Device Row & Quick Actions
+    // MARK: - Connected Device Segment
     @ViewBuilder
-    private func connectedDeviceRow(for device: DeviceViewModel) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Label {
-                    Text(device.name)
-                        .font(.body.weight(.medium))
-                } icon: {
-                    Image(systemName: device.deviceType.systemImageName)
-                        .foregroundColor(.accentColor)
-                }
-                .labelStyle(.titleAndIcon)
-
-                Spacer()
-
-                if let batt = device.batteryPercent {
-                    HStack(spacing: 3) {
-                        Image(systemName: device.isCharging ? "battery.100bolt" : batteryIconName(for: batt))
-                            .foregroundColor(batt < 20 ? .red : (device.isCharging ? .accentColor : .primary))
-                        Text("\(batt)%")
-                            .font(.caption2.monospacedDigit())
-                            .foregroundColor(.secondary)
-                    }
-                    .accessibilityLabel("Battery \(batt) percent\(device.isCharging ? ", charging" : "")")
-                }
-
-                Circle()
-                    .fill(Color.green)
-                    .frame(width: 8, height: 8)
-                    .accessibilityLabel("Connected")
-            }
-
-            // Quick Actions Bar
-            HStack(spacing: 6) {
-                Button {
-                    device.ping()
-                } label: {
-                    Label("Ping", systemImage: "bell.badge")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .accessibilityLabel("Ping \(device.name)")
-
-                Button {
-                    openSendFileDialog(for: device)
-                } label: {
-                    Label("Send File", systemImage: "paperclip")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .accessibilityLabel("Send file to \(device.name)")
-
-                Button {
-                    device.sendClipboard()
-                } label: {
-                    Label("Push Clip", systemImage: "doc.on.clipboard")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .accessibilityLabel("Send clipboard to \(device.name)")
-
-                Menu {
-                    Button {
-                        device.findMyPhone()
-                    } label: {
-                        Label("Ring Phone", systemImage: "speaker.wave.3")
-                    }
-
-                    Button {
-                        device.lockDevice()
-                    } label: {
-                        Label("Lock Screen", systemImage: "lock")
-                    }
-
-                    Divider()
-
-                    Button("Unpair", role: .destructive) {
-                        device.unpair()
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                }
-                .menuStyle(.borderlessButton)
-                .frame(width: 22)
-                .accessibilityLabel("More device actions")
-            }
-            .labelStyle(.iconOnly)
-        }
-        .padding(8)
-        .background(Color.secondary.opacity(0.08))
-        .cornerRadius(8)
-    }
-
-    // MARK: - Offline Device Row
-    @ViewBuilder
-    private func offlineDeviceRow(for device: DeviceViewModel) -> some View {
-        HStack(spacing: 8) {
-            Label {
-                Text(device.name)
-                    .font(.body)
-                    .foregroundColor(.secondary)
-            } icon: {
-                Image(systemName: device.deviceType.systemImageName)
-                    .foregroundColor(.secondary)
-            }
-            .labelStyle(.titleAndIcon)
-
-            Spacer()
-
-            Text("Offline")
-                .font(.caption2)
-                .foregroundColor(.secondary)
-
-            Circle()
-                .fill(Color.secondary.opacity(0.4))
-                .frame(width: 8, height: 8)
-                .accessibilityLabel("Offline")
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-    }
-
-    // MARK: - Available Devices Section
-    private var availableDevicesSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("AVAILABLE NEARBY")
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(.secondary)
-
-            ForEach(appModel.availableDevices) { device in
+    private func connectedDeviceSegment(for device: DeviceViewModel) -> some View {
+        GlassCard(cornerRadius: 14, paddingAmount: 12) {
+            VStack(alignment: .leading, spacing: 10) {
                 HStack(spacing: 8) {
-                    Label {
-                        Text(device.name)
-                            .font(.body)
-                    } icon: {
-                        Image(systemName: device.deviceType.systemImageName)
-                            .foregroundColor(.blue)
-                    }
-                    .labelStyle(.titleAndIcon)
+                    Image(systemName: device.deviceType.systemImageName)
+                        .font(.system(size: 16))
+                        .foregroundColor(.accentColor)
+
+                    Text(device.name)
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1)
 
                     Spacer()
 
-                    Button("Pair") {
-                        device.pair()
+                    if let batt = device.batteryPercent {
+                        HStack(spacing: 3) {
+                            Image(systemName: device.isCharging ? "battery.100bolt" : "battery.100")
+                                .font(.system(size: 11))
+                                .foregroundColor(batt <= 20 ? .red : (device.isCharging ? .accentColor : .primary))
+                            Text("\(batt)%")
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundColor(.secondary)
+                        }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .accessibilityLabel("Pair with \(device.name)")
+
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 7, height: 7)
+                        .shadow(color: Color.green.opacity(0.6), radius: 2)
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
+
+                // Quick Actions Glass Buttons
+                HStack(spacing: 6) {
+                    GlassButtonView(
+                        label: "Ping",
+                        systemImage: "bell.badge",
+                        size: .mini,
+                        helpText: "Ping Phone"
+                    ) {
+                        device.ping()
+                    }
+
+                    GlassButtonView(
+                        label: "Send File",
+                        systemImage: "paperclip",
+                        size: .mini,
+                        helpText: "Send File"
+                    ) {
+                        openSendFileDialog(for: device)
+                    }
+
+                    GlassButtonView(
+                        label: "Clipboard",
+                        systemImage: "doc.on.clipboard",
+                        size: .mini,
+                        helpText: "Push Clipboard"
+                    ) {
+                        device.sendClipboard()
+                    }
+
+                    GlassButtonView(
+                        label: "Ring",
+                        systemImage: "speaker.wave.3.fill",
+                        size: .mini,
+                        helpText: "Ring Phone"
+                    ) {
+                        device.findMyPhone()
+                    }
+                }
             }
         }
     }
 
-    // MARK: - Footer
-    private var footerSection: some View {
-        HStack {
-            Button("Open App") {
-                openWindow(id: "main")
-                NSApp.activate(ignoringOtherApps: true)
+    // MARK: - Media Player Segment
+    @ViewBuilder
+    private func mediaPlayerSegment(for device: DeviceViewModel) -> some View {
+        GlassCard(cornerRadius: 14, paddingAmount: 10) {
+            HStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(Color.accentColor.opacity(0.2))
+                        .frame(width: 36, height: 36)
+                    Image(systemName: "music.note")
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundColor(.accentColor)
+                }
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(device.nowPlayingTitle ?? "Music")
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
+                    if let artist = device.nowPlayingArtist, !artist.isEmpty {
+                        Text(artist)
+                            .font(.system(size: 10))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer()
+
+                HStack(spacing: 6) {
+                    Button {
+                        device.previousMedia()
+                    } label: {
+                        Image(systemName: "backward.fill")
+                            .font(.system(size: 10))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+
+                    Button {
+                        device.playPauseMedia()
+                    } label: {
+                        Image(systemName: device.nowPlayingIsPlaying ? "pause.fill" : "play.fill")
+                            .font(.system(size: 11))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.mini)
+
+                    Button {
+                        device.nextMedia()
+                    } label: {
+                        Image(systemName: "forward.fill")
+                            .font(.system(size: 10))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                }
             }
-            .buttonStyle(.bordered)
-            .controlSize(.regular)
-            .accessibilityHint("Opens the main Tether management window")
+        }
+    }
+
+    // MARK: - Empty Device Segment
+    private var emptyDeviceSegment: some View {
+        GlassCard(cornerRadius: 14, paddingAmount: 14) {
+            VStack(spacing: 6) {
+                Image(systemName: "antenna.radiowaves.left.and.right")
+                    .font(.system(size: 24))
+                    .foregroundColor(.secondary)
+                Text("No Connected Devices")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Ensure KDE Connect is running on your phone.")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+        }
+    }
+
+    // MARK: - Available Devices Segment
+    private var availableDevicesSegment: some View {
+        GlassCard(cornerRadius: 14, paddingAmount: 10) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("NEARBY DEVICES")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundColor(.secondary)
+
+                ForEach(appModel.availableDevices) { dev in
+                    HStack(spacing: 8) {
+                        Image(systemName: dev.deviceType.systemImageName)
+                            .foregroundColor(.blue)
+                        Text(dev.name)
+                            .font(.system(size: 12, weight: .medium))
+                            .lineLimit(1)
+                        Spacer()
+                        Button("Pair") {
+                            dev.pair()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.mini)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Footer Segment
+    private var footerSegment: some View {
+        HStack {
+            Button {
+                openSettings()
+                NSApp.activate(ignoringOtherApps: true)
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "gearshape")
+                    Text("Settings...")
+                }
+                .font(.caption)
+                .foregroundColor(.secondary)
+            }
+            .buttonStyle(.plain)
 
             Spacer()
 
-            Button("Quit") {
+            Button {
                 NSApplication.shared.terminate(nil)
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "power")
+                    Text("Quit")
+                }
+                .font(.caption)
+                .foregroundColor(.secondary)
             }
             .buttonStyle(.plain)
-            .foregroundColor(.secondary)
-            .font(.callout)
-            .accessibilityHint("Quits Tether")
         }
+        .padding(.horizontal, 4)
+        .padding(.top, 2)
     }
 
-    // MARK: - Helpers
-    private func batteryIconName(for percent: Int) -> String {
-        switch percent {
-        case ..<15: return "battery.0"
-        case ..<40: return "battery.25"
-        case ..<65: return "battery.50"
-        case ..<85: return "battery.75"
-        default: return "battery.100"
-        }
+    private func openAndFocusMainWindow() {
+        openWindow(id: "main")
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func openSendFileDialog(for device: DeviceViewModel) {
@@ -397,22 +396,13 @@ public struct MenuBarView: View {
     }
 }
 
-// MARK: - SwiftUI Previews
+// MARK: - Previews
 
-#Preview("Connected - Light Mode") {
-    MenuBarView(appModel: .mock())
-        .preferredColorScheme(.light)
-}
-
-#Preview("Connected - Dark Mode") {
+#Preview("Menu Bar - Connected") {
     MenuBarView(appModel: .mock())
         .preferredColorScheme(.dark)
 }
 
-#Preview("Pending Pairing Request") {
-    MenuBarView(appModel: .mockPairRequest())
-}
-
-#Preview("No Devices - Empty State") {
+#Preview("Menu Bar - Empty") {
     MenuBarView(appModel: .mockEmpty())
 }

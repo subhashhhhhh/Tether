@@ -2,8 +2,9 @@
 //  MainWindowView.swift
 //  Tether
 //
-//  Main application window with two-column NavigationSplitView, device grouping,
-//  TabsPickerStyle plugin switcher, and full modern macOS design system compliance.
+//  AirSync-inspired native macOS SwiftUI main window interface.
+//  Features an interactive phone mockup in the sidebar, modern glass cards,
+//  notification permission warnings, drag-and-drop transfers, and tabbed plugin views.
 //
 
 import SwiftUI
@@ -46,20 +47,16 @@ public struct MainWindowView: View {
     public var body: some View {
         NavigationSplitView {
             sidebarContent
-                .navigationSplitViewColumnWidth(min: 220, ideal: 250, max: 300)
+                .navigationSplitViewColumnWidth(min: 260, ideal: 280, max: 340)
         } detail: {
             if let device = appModel.selectedDevice {
-                DeviceDetailView(device: device)
+                DeviceDetailView(device: device, appModel: appModel)
                     .id(device.id)
             } else {
-                ContentUnavailableView(
-                    "Select a Device",
-                    systemImage: "sidebar.left",
-                    description: Text("Choose a device from the sidebar to view details, controls, and plugins.")
-                )
+                emptyDetailState
             }
         }
-        .frame(minWidth: 840, minHeight: 560)
+        .frame(minWidth: 880, minHeight: 600)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -70,109 +67,266 @@ public struct MainWindowView: View {
                 .help("Search for devices on the local network")
             }
         }
+        .onAppear {
+            appModel.checkNotificationStatus()
+        }
     }
 
     // MARK: - Sidebar Content
     private var sidebarContent: some View {
-        List(selection: $appModel.selectedDeviceId) {
-            if !appModel.filteredConnectedDevices.isEmpty {
-                Section("Connected") {
-                    ForEach(appModel.filteredConnectedDevices) { device in
-                        sidebarDeviceRow(for: device)
-                            .tag(device.id)
-                    }
-                }
-            }
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(spacing: 16) {
+                // Top Header / Device Switcher
+                sidebarHeader
 
-            if !appModel.filteredAvailableDevices.isEmpty {
-                Section("Available Nearby") {
-                    ForEach(appModel.filteredAvailableDevices) { device in
-                        sidebarAvailableRow(for: device)
-                            .tag(device.id)
+                // Centerpiece: Phone Mockup or Discovery Radar
+                if let device = appModel.selectedDevice {
+                    if device.status == .connected {
+                        PhoneMockupView(device: device)
+                            .padding(.vertical, 4)
+                    } else if device.status == .available {
+                        availableDeviceCard(for: device)
+                    } else {
+                        offlineDeviceCard(for: device)
                     }
+                } else {
+                    discoveryRadarCard
                 }
-            }
 
-            if !appModel.filteredOfflineDevices.isEmpty {
-                Section("Offline") {
-                    ForEach(appModel.filteredOfflineDevices) { device in
-                        sidebarDeviceRow(for: device)
-                            .tag(device.id)
-                    }
+                // Other Devices List
+                if otherDevicesCount > 0 {
+                    otherDevicesDrawer
                 }
-            }
 
-            if appModel.allDevices.isEmpty {
-                ContentUnavailableView(
-                    "No Devices",
-                    systemImage: "iphone.slash",
-                    description: Text("Make sure KDE Connect is running on your phone and connected to the same Wi-Fi network.")
-                )
-            } else if appModel.filteredConnectedDevices.isEmpty &&
-                        appModel.filteredAvailableDevices.isEmpty &&
-                        appModel.filteredOfflineDevices.isEmpty {
-                ContentUnavailableView.search(text: appModel.searchText)
+                Spacer(minLength: 16)
             }
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
         }
-        .listStyle(.sidebar)
-        .searchable(text: $appModel.searchText, prompt: "Search devices...")
-        .navigationTitle("Devices")
+        .background(.background.opacity(0.85))
     }
 
-    @ViewBuilder
-    private func sidebarDeviceRow(for device: DeviceViewModel) -> some View {
-        HStack(spacing: 8) {
-            Label {
-                Text(device.name)
+    // MARK: - Sidebar Header
+    private var sidebarHeader: some View {
+        HStack(alignment: .center, spacing: 8) {
+            Image(systemName: "iphone.gen3.circle.fill")
+                .font(.system(size: 20))
+                .foregroundColor(.accentColor)
+
+            if appModel.allDevices.count > 1 {
+                Menu {
+                    ForEach(appModel.allDevices) { dev in
+                        Button {
+                            appModel.selectedDeviceId = dev.id
+                        } label: {
+                            HStack {
+                                Text(dev.name)
+                                if dev.id == appModel.selectedDeviceId {
+                                    Image(systemName: "checkmark")
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(appModel.selectedDevice?.name ?? "Devices")
+                            .font(.system(size: 14, weight: .bold))
+                            .lineLimit(1)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .menuStyle(.borderlessButton)
+            } else {
+                Text(appModel.selectedDevice?.name ?? "Tether")
+                    .font(.system(size: 14, weight: .bold))
                     .lineLimit(1)
-            } icon: {
-                Image(systemName: device.deviceType.systemImageName)
-                    .foregroundColor(device.status == .connected ? .accentColor : .secondary)
             }
-            .labelStyle(.titleAndIcon)
 
             Spacer()
 
-            if let batt = device.batteryPercent, device.status == .connected {
-                HStack(spacing: 3) {
-                    Image(systemName: device.isCharging ? "battery.100bolt" : "battery.100")
-                        .foregroundColor(batt < 20 ? .red : (device.isCharging ? .accentColor : .secondary))
-                    Text("\(batt)%")
-                        .font(.caption2.monospacedDigit())
+            if let device = appModel.selectedDevice {
+                Circle()
+                    .fill(device.status.color)
+                    .frame(width: 8, height: 8)
+                    .shadow(color: device.status.color.opacity(device.status == .connected ? 0.6 : 0), radius: 3)
+            }
+        }
+        .padding(.horizontal, 6)
+    }
+
+    private var otherDevicesCount: Int {
+        let currentId = appModel.selectedDeviceId
+        return appModel.allDevices.filter { $0.id != currentId }.count
+    }
+
+    // MARK: - Other Devices Drawer
+    private var otherDevicesDrawer: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("OTHER DEVICES")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundColor(.secondary)
+                .padding(.horizontal, 4)
+
+            ForEach(appModel.allDevices.filter { $0.id != appModel.selectedDeviceId }) { dev in
+                Button {
+                    appModel.selectedDeviceId = dev.id
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: dev.deviceType.systemImageName)
+                            .font(.system(size: 13))
+                            .foregroundColor(dev.status == .connected ? .accentColor : .secondary)
+
+                        Text(dev.name)
+                            .font(.system(size: 12, weight: .medium))
+                            .lineLimit(1)
+
+                        Spacer()
+
+                        if dev.status == .available {
+                            Button("Pair") {
+                                dev.pair()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.mini)
+                        } else {
+                            Circle()
+                                .fill(dev.status.color)
+                                .frame(width: 6, height: 6)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(.ultraThinMaterial)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.top, 8)
+    }
+
+    // MARK: - Available Device Card
+    @ViewBuilder
+    private func availableDeviceCard(for device: DeviceViewModel) -> some View {
+        GlassCard(cornerRadius: 20, paddingAmount: 20) {
+            VStack(spacing: 16) {
+                ZStack {
+                    Circle()
+                        .fill(Color.blue.opacity(0.15))
+                        .frame(width: 64, height: 64)
+                    Image(systemName: "antenna.radiowaves.left.and.right")
+                        .font(.system(size: 28))
+                        .foregroundColor(.blue)
+                }
+
+                VStack(spacing: 4) {
+                    Text(device.name)
+                        .font(.headline)
+                    Text("Discovered on local Wi-Fi")
+                        .font(.caption)
                         .foregroundColor(.secondary)
                 }
-            }
 
-            Circle()
-                .fill(device.status.color)
-                .frame(width: 8, height: 8)
+                Button {
+                    device.pair()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "link")
+                        Text("Pair with Mac")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+            }
+            .frame(width: 200)
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(device.name), \(device.deviceType.rawValue), \(device.status.rawValue)")
     }
 
+    // MARK: - Offline Device Card
     @ViewBuilder
-    private func sidebarAvailableRow(for device: DeviceViewModel) -> some View {
-        HStack(spacing: 8) {
-            Label {
-                Text(device.name)
-                    .lineLimit(1)
-            } icon: {
-                Image(systemName: device.deviceType.systemImageName)
-                    .foregroundColor(.blue)
-            }
-            .labelStyle(.titleAndIcon)
+    private func offlineDeviceCard(for device: DeviceViewModel) -> some View {
+        GlassCard(cornerRadius: 20, paddingAmount: 20) {
+            VStack(spacing: 14) {
+                ZStack {
+                    Circle()
+                        .fill(Color.secondary.opacity(0.12))
+                        .frame(width: 60, height: 60)
+                    Image(systemName: "wifi.slash")
+                        .font(.system(size: 24))
+                        .foregroundColor(.secondary)
+                }
 
-            Spacer()
+                VStack(spacing: 4) {
+                    Text(device.name)
+                        .font(.headline)
+                    Text("Currently Offline")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
 
-            Button("Pair") {
-                device.pair()
+                Button("Unpair") {
+                    device.unpair()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.mini)
+            .frame(width: 200)
         }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(device.name), Available to pair")
+    }
+
+    // MARK: - Discovery Radar Card
+    private var discoveryRadarCard: some View {
+        GlassCard(cornerRadius: 20, paddingAmount: 24) {
+            VStack(spacing: 16) {
+                ZStack {
+                    Circle()
+                        .stroke(Color.accentColor.opacity(0.2), lineWidth: 2)
+                        .frame(width: 70, height: 70)
+                    Circle()
+                        .stroke(Color.accentColor.opacity(0.4), lineWidth: 1.5)
+                        .frame(width: 50, height: 50)
+                    Image(systemName: "antenna.radiowaves.left.and.right")
+                        .font(.system(size: 24))
+                        .foregroundColor(.accentColor)
+                }
+
+                VStack(spacing: 4) {
+                    Text("Looking for Devices...")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Ensure KDE Connect is running on your phone and on the same Wi-Fi.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+
+                Button {
+                    appModel.refreshDiscovery()
+                } label: {
+                    Label("Refresh", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+            .frame(width: 200)
+        }
+    }
+
+    // MARK: - Empty Detail State
+    private var emptyDetailState: some View {
+        ContentUnavailableView(
+            "Select a Device",
+            systemImage: "iphone.gen3",
+            description: Text("Choose a device from the sidebar to view details, file sharing, notifications, and remote controls.")
+        )
     }
 }
 
@@ -180,28 +334,30 @@ public struct MainWindowView: View {
 
 public struct DeviceDetailView: View {
     @Bindable var device: DeviceViewModel
+    var appModel: TetherAppModel
     @State private var selectedSection: PluginSection = .overview
 
-    public init(device: DeviceViewModel) {
+    public init(device: DeviceViewModel, appModel: TetherAppModel = TetherAppModel.shared) {
         self.device = device
+        self.appModel = appModel
     }
 
     public var body: some View {
         VStack(spacing: 0) {
-            headerBanner
+            // Notification Permission Warning Banner (if macOS alerts are off)
+            if appModel.isNotificationPermissionDenied {
+                notificationPermissionWarningBanner
+            }
+
+            // Top Header Banner
+            detailHeaderBanner
 
             Divider()
 
-            // Tab-style picker using TabsPickerStyle
-            Picker("Section", selection: $selectedSection) {
-                ForEach(PluginSection.allCases) { section in
-                    Label(section.rawValue, systemImage: section.icon)
-                        .tag(section)
-                }
-            }
-            .pickerStyle(.tabs)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
+            // Modern Segmented Tab Switcher
+            tabSwitcher
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
 
             Divider()
 
@@ -210,7 +366,7 @@ public struct DeviceDetailView: View {
             case .overview:
                 DeviceOverviewTab(device: device)
             case .notifications:
-                DeviceNotificationsTab(device: device)
+                DeviceNotificationsTab(device: device, appModel: appModel)
             case .transfers:
                 DeviceTransfersTab(device: device)
             case .input:
@@ -223,46 +379,80 @@ public struct DeviceDetailView: View {
         }
     }
 
-    // MARK: - Header Banner
-    private var headerBanner: some View {
-        HStack(spacing: 16) {
+    // MARK: - Notification Permission Warning Banner
+    private var notificationPermissionWarningBanner: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "bell.slash.fill")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundColor(.orange)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Notifications are Disabled in macOS")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Tether cannot deliver phone alerts or inline replies because notifications are turned off in System Settings.")
+                    .font(.system(size: 11))
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+
+            Button("Open System Settings") {
+                appModel.openNotificationSettings()
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+            .tint(.orange)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Color.orange.opacity(0.12))
+        .overlay(
+            Rectangle()
+                .fill(Color.orange.opacity(0.35))
+                .frame(height: 1),
+            alignment: .bottom
+        )
+    }
+
+    // MARK: - Detail Header Banner
+    private var detailHeaderBanner: some View {
+        HStack(spacing: 14) {
             ZStack {
                 Circle()
-                    .fill(Color.secondary.opacity(0.12))
-                    .frame(width: 50, height: 50)
+                    .fill(Color.secondary.opacity(0.10))
+                    .frame(width: 48, height: 48)
                 Image(systemName: device.deviceType.systemImageName)
-                    .font(.title)
+                    .font(.system(size: 22))
                     .foregroundColor(device.status == .connected ? .accentColor : .secondary)
             }
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
                     Text(device.name)
-                        .font(.title2.weight(.bold))
+                        .font(.title3.weight(.bold))
 
                     Text(device.status.rawValue)
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
+                        .font(.system(size: 10, weight: .semibold))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
                         .background(device.status.color.opacity(0.15))
                         .foregroundColor(device.status.color)
                         .clipShape(Capsule())
                 }
 
-                HStack(spacing: 12) {
+                HStack(spacing: 14) {
                     if let batt = device.batteryPercent {
                         HStack(spacing: 4) {
                             Image(systemName: device.isCharging ? "battery.100bolt" : "battery.100")
-                                .foregroundColor(batt < 20 ? .red : (device.isCharging ? .accentColor : .secondary))
+                                .foregroundColor(batt <= 20 ? .red : (device.isCharging ? .accentColor : .secondary))
                             Text("\(batt)%")
                                 .font(.caption.monospacedDigit())
                         }
-                        .accessibilityLabel("Battery \(batt) percent\(device.isCharging ? ", charging" : "")")
                     }
 
                     if let net = device.networkType {
                         HStack(spacing: 4) {
-                            Image(systemName: "antenna.radiowaves.left.and.right")
+                            Image(systemName: "wifi")
                                 .foregroundColor(.secondary)
                             Text(net)
                                 .font(.caption)
@@ -279,56 +469,102 @@ public struct DeviceDetailView: View {
 
             if device.status == .connected {
                 HStack(spacing: 8) {
-                    Button {
+                    GlassButtonView(
+                        label: "Ping",
+                        systemImage: "bell.badge",
+                        size: .small
+                    ) {
                         device.ping()
-                    } label: {
-                        Label("Ping", systemImage: "bell.badge")
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.regular)
 
-                    Button {
+                    GlassButtonView(
+                        label: "Ring",
+                        systemImage: "speaker.wave.3",
+                        size: .small
+                    ) {
                         device.findMyPhone()
-                    } label: {
-                        Label("Ring", systemImage: "speaker.wave.3")
                     }
-                    .buttonStyle(.bordered)
-                    .controlSize(.regular)
+
+                    GlassButtonView(
+                        label: "Lock",
+                        systemImage: "lock",
+                        size: .small
+                    ) {
+                        device.lockDevice()
+                    }
                 }
-            } else if device.status == .available {
-                Button("Pair Device") {
-                    device.pair()
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
             }
         }
-        .padding(16)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+    }
+
+    // MARK: - Tab Switcher
+    private var tabSwitcher: some View {
+        HStack(spacing: 6) {
+            ForEach(PluginSection.allCases) { section in
+                Button {
+                    selectedSection = section
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: section.icon)
+                            .font(.system(size: 12, weight: .medium))
+                        Text(section.rawValue)
+                            .font(.system(size: 12, weight: .medium))
+
+                        if section == .notifications && !device.notifications.isEmpty {
+                            Text("\(device.notifications.count)")
+                                .font(.system(size: 10, weight: .bold))
+                                .padding(.horizontal, 5)
+                                .padding(.vertical, 1)
+                                .background(Color.accentColor)
+                                .foregroundColor(.white)
+                                .clipShape(Capsule())
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .background(
+                        Capsule()
+                            .fill(selectedSection == section ? AnyShapeStyle(Color.accentColor.opacity(0.18)) : AnyShapeStyle(Color.clear))
+                    )
+                    .overlay(
+                        Capsule()
+                            .stroke(selectedSection == section ? Color.accentColor.opacity(0.35) : Color.clear, lineWidth: 1)
+                    )
+                    .foregroundColor(selectedSection == section ? .accentColor : .secondary)
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer()
+        }
     }
 }
 
 // MARK: - Overview Tab
 
-struct DeviceOverviewTab: View {
+public struct DeviceOverviewTab: View {
     @Bindable var device: DeviceViewModel
 
-    var body: some View {
+    public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                // Now Playing Card
-                if let title = device.nowPlayingTitle, !title.isEmpty {
-                    GroupBox("Now Playing on Phone") {
+            VStack(alignment: .leading, spacing: 18) {
+                // Now Playing Card (if active)
+                if let title = device.nowPlayingTitle, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    GlassCard(cornerRadius: 16, paddingAmount: 16) {
                         HStack(spacing: 14) {
-                            Image(systemName: "music.note")
-                                .font(.system(size: 28))
-                                .foregroundColor(.accentColor)
-                                .frame(width: 44, height: 44)
-                                .background(Color.accentColor.opacity(0.12))
-                                .cornerRadius(8)
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(Color.accentColor.opacity(0.2))
+                                    .frame(width: 48, height: 48)
+                                Image(systemName: "music.note")
+                                    .font(.system(size: 22, weight: .bold))
+                                    .foregroundColor(.accentColor)
+                            }
 
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 3) {
                                 Text(title)
-                                    .font(.body.weight(.semibold))
+                                    .font(.system(size: 14, weight: .semibold))
                                     .lineLimit(1)
                                 if let artist = device.nowPlayingArtist, !artist.isEmpty {
                                     Text(artist)
@@ -340,267 +576,401 @@ struct DeviceOverviewTab: View {
 
                             Spacer()
 
-                            HStack(spacing: 12) {
+                            HStack(spacing: 10) {
                                 Button {
                                     device.previousMedia()
                                 } label: {
                                     Image(systemName: "backward.fill")
+                                        .font(.system(size: 14))
                                 }
-                                .buttonStyle(.borderless)
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
 
                                 Button {
                                     device.playPauseMedia()
                                 } label: {
-                                    Image(systemName: device.nowPlayingIsPlaying ? "pause.circle.fill" : "play.circle.fill")
-                                        .font(.title2)
+                                    Image(systemName: device.nowPlayingIsPlaying ? "pause.fill" : "play.fill")
+                                        .font(.system(size: 14))
                                 }
-                                .buttonStyle(.borderless)
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.small)
 
                                 Button {
                                     device.nextMedia()
                                 } label: {
                                     Image(systemName: "forward.fill")
+                                        .font(.system(size: 14))
                                 }
-                                .buttonStyle(.borderless)
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
                             }
                         }
-                        .padding(6)
                     }
                 }
 
-                // Volume Control
+                // Remote Volume Card
                 if device.status == .connected {
-                    GroupBox("Remote Volume") {
-                        HStack(spacing: 12) {
-                            Image(systemName: device.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                                .foregroundColor(device.isMuted ? .secondary : .accentColor)
-                                .frame(width: 24)
+                    GlassCard(cornerRadius: 16, paddingAmount: 16) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Remote Device Volume")
+                                .font(.subheadline.weight(.semibold))
 
-                            Slider(value: Binding(
-                                get: { device.volume },
-                                set: { device.setVolume($0) }
-                            ), in: 0...1)
+                            HStack(spacing: 12) {
+                                Image(systemName: device.isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                                    .foregroundColor(device.isMuted ? .secondary : .accentColor)
+                                    .frame(width: 20)
 
-                            Text("\(Int(device.volume * 100))%")
-                                .font(.caption.monospacedDigit())
-                                .foregroundColor(.secondary)
-                                .frame(width: 36, alignment: .trailing)
+                                Slider(value: Binding(
+                                    get: { device.volume },
+                                    set: { device.setVolume($0) }
+                                ), in: 0...1)
+
+                                Text("\(Int(device.volume * 100))%")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundColor(.secondary)
+                                    .frame(width: 36, alignment: .trailing)
+                            }
                         }
-                        .padding(6)
                     }
                 }
 
                 // Quick Actions Grid
-                GroupBox("Device Actions") {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 140))], spacing: 10) {
-                        actionButton(title: "Ping Phone", icon: "bell.badge", disabled: device.status != .connected) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Quick Controls")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundColor(.secondary)
+
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 150))], spacing: 12) {
+                        quickActionButton(title: "Ping Device", icon: "bell.badge", disabled: device.status != .connected) {
                             device.ping()
                         }
-                        actionButton(title: "Ring Phone", icon: "speaker.wave.3", disabled: device.status != .connected) {
+                        quickActionButton(title: "Ring Phone", icon: "speaker.wave.3.fill", disabled: device.status != .connected) {
                             device.findMyPhone()
                         }
-                        actionButton(title: "Lock Screen", icon: "lock", disabled: device.status != .connected) {
+                        quickActionButton(title: "Lock Screen", icon: "lock.fill", disabled: device.status != .connected) {
                             device.lockDevice()
                         }
-                        actionButton(title: "Push Clipboard", icon: "doc.on.clipboard", disabled: device.status != .connected) {
+                        quickActionButton(title: "Push Clipboard", icon: "doc.on.clipboard.fill", disabled: device.status != .connected) {
                             device.sendClipboard()
                         }
                     }
-                    .padding(6)
                 }
 
                 Spacer()
             }
-            .padding(16)
+            .padding(18)
         }
     }
 
-    private func actionButton(title: String, icon: String, disabled: Bool = false, action: @escaping () -> Void) -> some View {
+    private func quickActionButton(title: String, icon: String, disabled: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             VStack(spacing: 8) {
                 Image(systemName: icon)
-                    .font(.title2)
+                    .font(.system(size: 20))
+                    .foregroundColor(disabled ? .secondary : .accentColor)
                 Text(title)
                     .font(.caption.weight(.medium))
             }
-            .frame(maxWidth: .infinity, minHeight: 64)
-            .background(Color.secondary.opacity(0.08))
-            .cornerRadius(8)
+            .frame(maxWidth: .infinity, minHeight: 70)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(.ultraThinMaterial)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            )
         }
         .buttonStyle(.plain)
         .disabled(disabled)
-        .opacity(disabled ? 0.5 : 1.0)
+        .opacity(disabled ? 0.45 : 1.0)
     }
 }
 
 // MARK: - Notifications Tab
 
-struct DeviceNotificationsTab: View {
+public struct DeviceNotificationsTab: View {
     @Bindable var device: DeviceViewModel
+    var appModel: TetherAppModel
 
-    var body: some View {
-        if device.notifications.isEmpty {
-            ContentUnavailableView(
-                "No Notifications",
-                systemImage: "bell.slash",
-                description: Text("Active notifications received from \(device.name) will appear here.")
-            )
-        } else {
-            List {
-                ForEach(device.notifications) { notif in
-                    HStack(alignment: .top, spacing: 12) {
-                        Image(systemName: "app.badge")
-                            .font(.title2)
-                            .foregroundColor(.accentColor)
+    @State private var replyingToId: String? = nil
+    @State private var replyText: String = ""
 
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack {
-                                Text(notif.appName)
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                                Text(notif.date, style: .time)
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                            }
-
-                            Text(notif.title)
-                                .font(.body.weight(.medium))
-
-                            Text(notif.body)
-                                .font(.subheadline)
-                                .foregroundColor(.secondary)
-                        }
-
-                        Spacer()
-
-                        Button(role: .destructive) {
+    public var body: some View {
+        VStack(spacing: 0) {
+            // Header bar
+            HStack {
+                Text("Notifications (\(device.notifications.count))")
+                    .font(.headline)
+                Spacer()
+                if !device.notifications.isEmpty {
+                    Button("Dismiss All") {
+                        for notif in device.notifications {
                             device.dismissNotification(id: notif.id)
-                        } label: {
-                            Image(systemName: "xmark.circle")
-                                .foregroundColor(.secondary)
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityLabel("Dismiss notification on phone")
                     }
-                    .padding(.vertical, 4)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
             }
-            .listStyle(.inset)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+
+            Divider()
+
+            if device.notifications.isEmpty {
+                ContentUnavailableView(
+                    "No Notifications",
+                    systemImage: "bell.slash",
+                    description: Text("Alerts and messages received from \(device.name) will appear here.")
+                )
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 10) {
+                        ForEach(device.notifications) { notif in
+                            notificationCard(for: notif)
+                        }
+                    }
+                    .padding(16)
+                }
+            }
         }
+    }
+
+    @ViewBuilder
+    private func notificationCard(for notif: DeliveredNotificationItem) -> some View {
+        GlassCard(cornerRadius: 14, paddingAmount: 14) {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 10) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.accentColor.opacity(0.18))
+                            .frame(width: 32, height: 32)
+                        Image(systemName: "app.badge")
+                            .font(.system(size: 15))
+                            .foregroundColor(.accentColor)
+                    }
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack {
+                            Text(notif.appName)
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(.secondary)
+                            Spacer()
+                            Text(notif.date, style: .time)
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                        }
+
+                        Text(notif.title)
+                            .font(.system(size: 13, weight: .semibold))
+
+                        Text(notif.body)
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                    }
+
+                    Spacer()
+
+                    Button {
+                        device.dismissNotification(id: notif.id)
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundColor(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Dismiss on phone")
+                }
+
+                // Inline quick reply field (if replying)
+                if replyingToId == notif.id {
+                    HStack(spacing: 8) {
+                        TextField("Type reply...", text: $replyText)
+                            .textFieldStyle(.roundedBorder)
+                            .onSubmit {
+                                sendReply(for: notif)
+                            }
+
+                        Button("Send") {
+                            sendReply(for: notif)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                        Button("Cancel") {
+                            replyingToId = nil
+                            replyText = ""
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    .padding(.top, 4)
+                } else if notif.replyId != nil {
+                    Button {
+                        replyingToId = notif.id
+                        replyText = ""
+                    } label: {
+                        Label("Reply", systemImage: "arrowshape.turn.up.left")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+                    .padding(.top, 2)
+                }
+            }
+        }
+    }
+
+    private func sendReply(for notif: DeliveredNotificationItem) {
+        let text = replyText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        // Broadcast reply or SMS
+        device.sendSMS(to: notif.appName, message: text)
+        replyingToId = nil
+        replyText = ""
     }
 }
 
 // MARK: - Transfers Tab
 
-struct DeviceTransfersTab: View {
+public struct DeviceTransfersTab: View {
     @Bindable var device: DeviceViewModel
-    @State private var isDropTarget = false
+    @State private var isDropTarget: Bool = false
 
-    var body: some View {
+    public var body: some View {
         VStack(spacing: 0) {
-            // Drag and drop target / Send button header
-            HStack {
-                Text("File Sharing")
-                    .font(.headline)
-                Spacer()
-                Button {
-                    openSendFileDialog()
-                } label: {
-                    Label("Send File...", systemImage: "paperplane")
-                }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.regular)
-            }
-            .padding(16)
+            // Drag and drop zone card
+            dropZoneCard
+                .padding(16)
 
             Divider()
 
+            // Recent transfers list
             if device.transfers.isEmpty {
-                VStack(spacing: 12) {
+                VStack(spacing: 8) {
                     Image(systemName: "arrow.up.arrow.down.circle")
-                        .font(.system(size: 48))
-                        .foregroundColor(.secondary.opacity(0.6))
-                    Text("No Recent Transfers")
-                        .font(.title3.weight(.medium))
-                    Text("Drag and drop files anywhere here, or click Send File.")
-                        .font(.subheadline)
+                        .font(.system(size: 40))
+                        .foregroundColor(.secondary.opacity(0.5))
+                    Text("No Transfers Yet")
+                        .font(.subheadline.weight(.medium))
+                    Text("Transferred files will appear here.")
+                        .font(.caption)
                         .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(isDropTarget ? Color.accentColor : Color.clear, lineWidth: 2)
-                        .padding(16)
-                )
             } else {
-                List(device.transfers) { item in
-                    HStack(spacing: 12) {
-                        Image(systemName: item.direction == .incoming ? "arrow.down.doc" : "arrow.up.doc")
-                            .font(.title2)
-                            .foregroundColor(.accentColor)
-
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(item.filename)
-                                .font(.body.weight(.medium))
-                            HStack(spacing: 8) {
-                                Text(ByteCountFormatter.string(fromByteCount: item.totalBytes, countStyle: .file))
-                                    .font(.caption2)
-                                    .foregroundColor(.secondary)
-                                if item.status == .transferring {
-                                    Text("\(Int(item.progress * 100))%")
-                                        .font(.caption2.monospacedDigit())
-                                        .foregroundColor(.accentColor)
-                                }
-                            }
-                            if item.status == .transferring {
-                                ProgressView(value: item.progress)
-                            }
-                        }
-
-                        Spacer()
-
-                        switch item.status {
-                        case .completed:
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundColor(.green)
-                        case .failed(let reason):
-                            Image(systemName: "exclamationmark.circle.fill")
-                                .foregroundColor(.red)
-                                .help(reason)
-                        case .transferring:
-                            ProgressView()
-                                .controlSize(.small)
-                        case .queued:
-                            Text("Queued")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        case .cancelled:
-                            Text("Cancelled")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(device.transfers) { item in
+                            transferItemCard(for: item)
                         }
                     }
-                    .padding(.vertical, 4)
+                    .padding(16)
                 }
-                .listStyle(.inset)
             }
         }
         .onDrop(of: [.fileURL], isTargeted: $isDropTarget) { providers in
-            for provider in providers {
-                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
-                    if let data = item as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) {
-                        DispatchQueue.main.async {
-                            device.sendFile(url: url)
-                        }
-                    } else if let url = item as? URL {
-                        DispatchQueue.main.async {
-                            device.sendFile(url: url)
+            handleDroppedFiles(providers)
+        }
+    }
+
+    private var dropZoneCard: some View {
+        VStack(spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(Color.accentColor.opacity(isDropTarget ? 0.25 : 0.12))
+                    .frame(width: 54, height: 54)
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 24))
+                    .foregroundColor(.accentColor)
+            }
+
+            VStack(spacing: 4) {
+                Text("Drop files here to send to \(device.name)")
+                    .font(.system(size: 13, weight: .semibold))
+                Text("or click to choose files from Finder")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            Button {
+                openSendFileDialog()
+            } label: {
+                Label("Browse Files...", systemImage: "folder")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.regular)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(isDropTarget ? Color.accentColor.opacity(0.08) : Color.secondary.opacity(0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(
+                    isDropTarget ? Color.accentColor : Color.secondary.opacity(0.2),
+                    style: StrokeStyle(lineWidth: 1.5, dash: [6, 4])
+                )
+        )
+    }
+
+    @ViewBuilder
+    private func transferItemCard(for item: TransferItem) -> some View {
+        GlassCard(cornerRadius: 12, paddingAmount: 12) {
+            HStack(spacing: 12) {
+                Image(systemName: item.direction == .incoming ? "arrow.down.doc.fill" : "arrow.up.doc.fill")
+                    .font(.system(size: 22))
+                    .foregroundColor(.accentColor)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(item.filename)
+                        .font(.system(size: 13, weight: .medium))
+                        .lineLimit(1)
+
+                    HStack(spacing: 8) {
+                        Text(ByteCountFormatter.string(fromByteCount: item.totalBytes, countStyle: .file))
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+
+                        if item.status == .transferring {
+                            Text("\(Int(item.progress * 100))%")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundColor(.accentColor)
                         }
                     }
+
+                    if item.status == .transferring {
+                        ProgressView(value: item.progress)
+                            .progressViewStyle(.linear)
+                    }
+                }
+
+                Spacer()
+
+                switch item.status {
+                case .completed:
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundColor(.green)
+                case .failed(let reason):
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .foregroundColor(.red)
+                        .help(reason)
+                case .transferring:
+                    ProgressView()
+                        .controlSize(.small)
+                case .queued:
+                    Text("Queued")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                case .cancelled:
+                    Text("Cancelled")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
                 }
             }
-            return true
         }
     }
 
@@ -616,91 +986,116 @@ struct DeviceTransfersTab: View {
             }
         }
     }
+
+    private func handleDroppedFiles(_ providers: [NSItemProvider]) -> Bool {
+        for provider in providers {
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                if let data = item as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) {
+                    DispatchQueue.main.async {
+                        device.sendFile(url: url)
+                    }
+                } else if let url = item as? URL {
+                    DispatchQueue.main.async {
+                        device.sendFile(url: url)
+                    }
+                }
+            }
+        }
+        return true
+    }
 }
 
-// MARK: - Remote Input & Presenter Tab
+// MARK: - Remote Input Tab
 
-struct DeviceRemoteInputTab: View {
+public struct DeviceRemoteInputTab: View {
     @Bindable var device: DeviceViewModel
-    @State private var isAccessibilityTrusted = InputSynthesizer.shared.isAccessibilityTrusted
-    @State private var laserPointerActive = false
+    @State private var isAccessibilityTrusted: Bool = InputSynthesizer.shared.isAccessibilityTrusted
+    @State private var laserPointerActive: Bool = false
 
-    var body: some View {
+    public var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Remote Mouse, Keyboard & Presentation")
-                    .font(.headline)
-
-                Text("Allows \(device.name) to act as a wireless trackpad, keyboard, and laser pointer during slide presentations.")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-
-                GroupBox("macOS Accessibility Permissions") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            Image(systemName: isAccessibilityTrusted ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-                                .foregroundColor(isAccessibilityTrusted ? .green : .orange)
-                                .font(.title3)
-
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(isAccessibilityTrusted ? "Accessibility Granted" : "Permission Required")
-                                    .font(.body.weight(.medium))
-                                Text(isAccessibilityTrusted ? "Tether can synthesize cursor movement and clicks." : "Grant permission in System Settings to enable trackpad control.")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-
-                            Spacer()
-
-                            Button("System Settings") {
-                                InputSynthesizer.shared.openAccessibilitySettings()
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                        }
-
-                        if !isAccessibilityTrusted {
-                            Button("Check / Prompt Permission") {
-                                InputSynthesizer.shared.promptAccessibilityPermission()
-                                DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                                    isAccessibilityTrusted = InputSynthesizer.shared.isAccessibilityTrusted
-                                }
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.small)
-                        }
-                    }
-                    .padding(6)
+            VStack(alignment: .leading, spacing: 18) {
+                // Header
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Remote Input & Presentation")
+                        .font(.headline)
+                    Text("\(device.name) can act as a wireless trackpad, keyboard, and slide laser pointer.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
                 }
 
-                GroupBox("Presenter Overlay") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Virtual Laser Pointer")
-                                    .font(.body.weight(.medium))
-                                Text("Renders a highlighted pointer dot on your screen during slide presentations.")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                            Spacer()
-                            Toggle("", isOn: $laserPointerActive)
-                                .toggleStyle(.switch)
-                                .onChange(of: laserPointerActive) { _, active in
-                                    if active {
-                                        PresenterOverlayWindowController.shared.update(xPos: 0.5, yPos: 0.5)
-                                    } else {
-                                        PresenterOverlayWindowController.shared.hide()
-                                    }
-                                }
-                        }
+                // Virtual Trackpad Card
+                GlassCard(cornerRadius: 16, paddingAmount: 20) {
+                    VStack(spacing: 12) {
+                        Image(systemName: "hand.tap.fill")
+                            .font(.system(size: 32))
+                            .foregroundColor(.accentColor)
+
+                        Text("Wireless Trackpad Ready")
+                            .font(.system(size: 14, weight: .semibold))
+
+                        Text("Open the Remote Input tool in KDE Connect on your phone to control the mouse pointer and enter text.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
                     }
-                    .padding(6)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                }
+
+                // Laser Pointer Card
+                GlassCard(cornerRadius: 16, paddingAmount: 16) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Virtual Laser Pointer")
+                                .font(.subheadline.weight(.semibold))
+                            Text("Shows a high-visibility pointer dot on screen during presentations.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+
+                        Spacer()
+
+                        Toggle("", isOn: $laserPointerActive)
+                            .toggleStyle(.switch)
+                            .onChange(of: laserPointerActive) { _, active in
+                                if active {
+                                    PresenterOverlayWindowController.shared.update(xPos: 0.5, yPos: 0.5)
+                                } else {
+                                    PresenterOverlayWindowController.shared.hide()
+                                }
+                            }
+                    }
+                }
+
+                // macOS Accessibility Card
+                GlassCard(cornerRadius: 16, paddingAmount: 16) {
+                    HStack(spacing: 12) {
+                        Image(systemName: isAccessibilityTrusted ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                            .font(.title2)
+                            .foregroundColor(isAccessibilityTrusted ? .green : .orange)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(isAccessibilityTrusted ? "Accessibility Granted" : "Accessibility Permission Required")
+                                .font(.subheadline.weight(.semibold))
+                            Text(isAccessibilityTrusted ? "Tether is authorized to synthesize mouse and keyboard events." : "Enable Tether in System Settings > Privacy & Security > Accessibility.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+
+                        Spacer()
+
+                        Button("Settings") {
+                            InputSynthesizer.shared.openAccessibilitySettings()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
                 }
 
                 Spacer()
             }
-            .padding(16)
+            .padding(18)
         }
         .onAppear {
             isAccessibilityTrusted = InputSynthesizer.shared.isAccessibilityTrusted
@@ -710,25 +1105,25 @@ struct DeviceRemoteInputTab: View {
 
 // MARK: - Messages Tab
 
-struct DeviceMessagesTab: View {
+public struct DeviceMessagesTab: View {
     @Bindable var device: DeviceViewModel
     @State private var selectedThreadId: Int64?
     @State private var composeText: String = ""
 
-    var body: some View {
+    public var body: some View {
         if device.smsThreads.isEmpty {
             ContentUnavailableView(
                 "No Messages",
                 systemImage: "bubble.left.and.bubble.right",
-                description: Text("SMS threads from \(device.name) will appear here once synchronized.")
+                description: Text("SMS threads from \(device.name) will appear here once synced.")
             )
         } else {
             NavigationSplitView {
                 List(device.smsThreads, selection: $selectedThreadId) { thread in
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 3) {
                         HStack {
                             Text(thread.title)
-                                .font(.body.weight(.medium))
+                                .font(.system(size: 13, weight: .semibold))
                                 .lineLimit(1)
                             Spacer()
                             if let last = thread.lastMessage {
@@ -744,10 +1139,10 @@ struct DeviceMessagesTab: View {
                                 .lineLimit(2)
                         }
                     }
-                    .padding(.vertical, 2)
+                    .padding(.vertical, 4)
                     .tag(thread.id)
                 }
-                .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 280)
+                .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 270)
             } detail: {
                 if let threadId = selectedThreadId ?? device.smsThreads.first?.id,
                    let thread = device.smsThreads.first(where: { $0.id == threadId }) {
@@ -758,11 +1153,14 @@ struct DeviceMessagesTab: View {
                                     HStack {
                                         if msg.isOutgoing { Spacer() }
                                         Text(msg.body)
-                                            .padding(.horizontal, 12)
+                                            .font(.system(size: 13))
+                                            .padding(.horizontal, 14)
                                             .padding(.vertical, 8)
-                                            .background(msg.isOutgoing ? Color.accentColor : Color.secondary.opacity(0.15))
+                                            .background(
+                                                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                                    .fill(msg.isOutgoing ? Color.accentColor : Color.secondary.opacity(0.15))
+                                            )
                                             .foregroundColor(msg.isOutgoing ? .white : .primary)
-                                            .cornerRadius(14)
                                         if !msg.isOutgoing { Spacer() }
                                     }
                                 }
@@ -772,7 +1170,7 @@ struct DeviceMessagesTab: View {
 
                         Divider()
 
-                        HStack {
+                        HStack(spacing: 8) {
                             TextField("Type an SMS reply...", text: $composeText)
                                 .textFieldStyle(.roundedBorder)
                                 .onSubmit {
@@ -804,57 +1202,62 @@ struct DeviceMessagesTab: View {
 
 // MARK: - Commands Tab
 
-struct DeviceCommandsTab: View {
+public struct DeviceCommandsTab: View {
     @Bindable var device: DeviceViewModel
 
-    var body: some View {
+    public var body: some View {
         if device.commands.isEmpty {
             ContentUnavailableView(
                 "No Commands Configured",
                 systemImage: "terminal",
-                description: Text("Shell commands configured in Tether can be triggered remotely from your phone.")
+                description: Text("Shell commands configured in Tether can be run remotely from your phone.")
             )
         } else {
-            List(device.commands) { cmd in
-                HStack(spacing: 12) {
-                    Image(systemName: "terminal")
-                        .font(.title3)
-                        .foregroundColor(.accentColor)
+            ScrollView {
+                LazyVStack(spacing: 10) {
+                    ForEach(device.commands) { cmd in
+                        GlassCard(cornerRadius: 14, paddingAmount: 14) {
+                            HStack(spacing: 12) {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .fill(Color.accentColor.opacity(0.15))
+                                        .frame(width: 36, height: 36)
+                                    Image(systemName: "terminal")
+                                        .font(.system(size: 16))
+                                        .foregroundColor(.accentColor)
+                                }
 
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(cmd.name)
-                            .font(.body.weight(.medium))
-                        Text(cmd.command)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(cmd.name)
+                                        .font(.system(size: 13, weight: .semibold))
+                                    Text(cmd.command)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundColor(.secondary)
+                                        .lineLimit(1)
+                                }
+
+                                Spacer()
+
+                                Button {
+                                    device.executeCommand(id: cmd.id)
+                                } label: {
+                                    Label("Run", systemImage: "play.fill")
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            }
+                        }
                     }
-
-                    Spacer()
-
-                    Button {
-                        device.executeCommand(id: cmd.id)
-                    } label: {
-                        Label("Run on Mac", systemImage: "play.fill")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
                 }
-                .padding(.vertical, 4)
+                .padding(16)
             }
-            .listStyle(.inset)
         }
     }
 }
 
-// MARK: - SwiftUI Previews
+// MARK: - Previews
 
-#Preview("Main Window - Connected Phone (Light)") {
-    MainWindowView(appModel: .mock())
-        .preferredColorScheme(.light)
-}
-
-#Preview("Main Window - Connected Phone (Dark)") {
+#Preview("Main Window - Connected Phone") {
     MainWindowView(appModel: .mock())
         .preferredColorScheme(.dark)
 }

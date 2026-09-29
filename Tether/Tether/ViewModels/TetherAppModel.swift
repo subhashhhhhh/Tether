@@ -38,6 +38,11 @@ public final class TetherAppModel {
     public var searchText: String = ""
     public var isRunning: Bool = false
     public var isSearching: Bool = false
+    public var notificationAuthStatus: UNAuthorizationStatus = .authorized
+
+    public var isNotificationPermissionDenied: Bool {
+        notificationAuthStatus == .denied
+    }
 
     private var cancellables = Set<AnyCancellable>()
     private var isMockMode: Bool = false
@@ -98,6 +103,7 @@ public final class TetherAppModel {
         if !isMock {
             setupLiveSubscriptions()
             rebuildDeviceLists()
+            checkNotificationStatus()
         }
     }
 
@@ -368,6 +374,22 @@ public final class TetherAppModel {
 
     public func refreshDiscovery() {
         TetherService.shared.refreshDiscovery()
+        checkNotificationStatus()
+    }
+
+    public func checkNotificationStatus() {
+        guard !isMockMode else { return }
+        UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
+            DispatchQueue.main.async {
+                self?.notificationAuthStatus = settings.authorizationStatus
+            }
+        }
+    }
+
+    public func openNotificationSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.notifications") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     // MARK: - Mocks for Previews
