@@ -74,4 +74,93 @@ struct TetherTests {
         store.remove(deviceId: testId)
         #expect(!store.isTrusted(deviceId: testId))
     }
+
+    /// The uploader must hand back a port inside the range upstream reserves.
+    @Test func testPayloadUploaderBindsInReservedRange() async throws {
+        let url = try makeTemporaryPayload(bytes: 1024)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let port: UInt16 = try await withCheckedThrowingContinuation { continuation in
+            let uploader = PayloadUploader()
+            uploader.start(
+                fileURL: url,
+                onReady: { offer in continuation.resume(returning: offer.port) },
+                onProgress: { _ in },
+                onComplete: { _ in }
+            )
+        }
+
+        #expect(port >= PayloadPort.min)
+        #expect(port <= PayloadPort.max)
+    }
+
+    /// End-to-end: TLS server streams a file, TLS client reassembles it byte-for-byte.
+    /// Sized past one chunk so the framing loop is exercised more than once.
+    @Test func testPayloadRoundTripOverLocalhost() async throws {
+        let byteCount = 300 * 1024
+        let url = try makeTemporaryPayload(bytes: byteCount)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let expected = try Data(contentsOf: url)
+        let guardOnce = ResumeGuard()
+        let uploader = PayloadUploader()
+        var uploaderProgress: [Double] = []
+
+        let received: Data = try await withCheckedThrowingContinuation { continuation in
+            uploader.start(
+                fileURL: url,
+                onReady: { offer in
+                    PayloadDownloader.download(
+                        host: "127.0.0.1",
+                        port: offer.port,
+                        size: offer.size
+                    ) { result in
+                        // The uploader reports its own failures; only one side wins.
+                        guard guardOnce.claim() else { return }
+                        continuation.resume(with: result)
+                    }
+                },
+                onProgress: { uploaderProgress.append($0) },
+                onComplete: { result in
+                    if case .failure(let error) = result, guardOnce.claim() {
+                        continuation.resume(throwing: error)
+                    }
+                }
+            )
+        }
+
+        #expect(received.count == byteCount)
+        #expect(received == expected)
+        #expect(uploaderProgress.count > 1, "expected multiple progress callbacks across chunks")
+        #expect(uploaderProgress.last.map { $0 >= 1.0 } == true)
+    }
+
+    // MARK: - Helpers
+
+    private func makeTemporaryPayload(bytes: Int) throws -> URL {
+        var payload = Data(count: bytes)
+        payload.withUnsafeMutableBytes { buffer in
+            for index in 0..<bytes {
+                buffer[index] = UInt8(truncatingIfNeeded: index &* 31 &+ 7)
+            }
+        }
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tether-payload-test-\(UUID().uuidString).bin")
+        try payload.write(to: url)
+        return url
+    }
+}
+
+/// Lets only the first of several racing callbacks resolve a continuation.
+private final class ResumeGuard: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isClaimed = false
+
+    func claim() -> Bool {
+        lock.withLock {
+            guard !isClaimed else { return false }
+            isClaimed = true
+            return true
+        }
+    }
 }

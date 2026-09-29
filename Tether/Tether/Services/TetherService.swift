@@ -189,6 +189,37 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, TCPLis
                 }
             }
         }
+
+        // A packet may announce a binary payload that follows on a separate TLS
+        // connection. Fetch it in the background and deliver the bytes separately.
+        guard let size = packet.payloadSize, size > 0,
+              let rawPort = packet.payloadTransferInfo?["port"]?.value,
+              let port = Self.payloadPort(from: rawPort) else { return }
+
+        PayloadDownloader.download(host: connection.host, port: port, size: size) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let data):
+                Task { @MainActor in
+                    for plugin in self.plugins where plugin.supportedPacketTypes.contains(packet.type) {
+                        plugin.handlePayload(connection: connection, packet: packet, data: data)
+                    }
+                }
+            case .failure(let error):
+                TetherLog("[TetherService] Payload transfer failed for \(packet.type): \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Payload ports are integers on the wire, but tolerate a stringified value.
+    nonisolated private static func payloadPort(from value: Any) -> UInt16? {
+        switch value {
+        case let int as Int: return UInt16(exactly: int)
+        case let int64 as Int64: return UInt16(exactly: int64)
+        case let number as NSNumber: return UInt16(exactly: number.intValue)
+        case let string as String: return UInt16(string)
+        default: return nil
+        }
     }
 
     nonisolated public func deviceConnection(_ connection: DeviceConnection, didUpdatePairState state: PairState) {
