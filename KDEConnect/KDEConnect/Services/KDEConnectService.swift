@@ -6,6 +6,7 @@
 import Foundation
 import Combine
 import SwiftUI
+import UserNotifications
 
 @MainActor
 public final class KDEConnectService: ObservableObject, UDPDiscoveryDelegate, TCPListenerDelegate, DeviceConnectionDelegate {
@@ -119,8 +120,11 @@ public final class KDEConnectService: ObservableObject, UDPDiscoveryDelegate, TC
             }
             self.connectedDevices[id] = connection
 
-            for plugin in self.plugins {
-                plugin.onConnected(connection: connection)
+            // IMPORTANT: Only activate plugins if the device is already paired!
+            if connection.pairState == .paired {
+                for plugin in self.plugins {
+                    plugin.onConnected(connection: connection)
+                }
             }
             KDLog("[KDEConnectService] Connected to \(connection.peerDeviceInfo?.deviceName ?? id)")
         }
@@ -162,10 +166,12 @@ public final class KDEConnectService: ObservableObject, UDPDiscoveryDelegate, TC
 
             if state == .requestedByPeer {
                 self.incomingPairRequest = (connection: connection, info: info)
+                self.showPairingRequestNotification(info: info, connection: connection)
             } else if state == .paired {
                 if self.incomingPairRequest?.info.deviceId == info.deviceId {
                     self.incomingPairRequest = nil
                 }
+                self.dismissPairingRequestNotification(deviceId: info.deviceId)
                 for plugin in self.plugins {
                     plugin.onConnected(connection: connection)
                 }
@@ -173,13 +179,17 @@ public final class KDEConnectService: ObservableObject, UDPDiscoveryDelegate, TC
                 if self.incomingPairRequest?.info.deviceId == info.deviceId {
                     self.incomingPairRequest = nil
                 }
+                self.dismissPairingRequestNotification(deviceId: info.deviceId)
+                for plugin in self.plugins {
+                    plugin.onDisconnected(connection: connection)
+                }
             }
         }
     }
 
     // MARK: - Pairing & User Actions
     public func requestPair(with deviceInfo: DeviceInfo) {
-        if let conn = connectedDevices[deviceInfo.deviceId] {
+        if let conn = connectedDevices[deviceInfo.deviceId], !conn.isDisconnected {
             conn.requestPairing()
         } else if let endpoint = discoveredDeviceEndpoints[deviceInfo.deviceId] {
             let key = "out_\(deviceInfo.deviceId)"
@@ -193,17 +203,28 @@ public final class KDEConnectService: ObservableObject, UDPDiscoveryDelegate, TC
     }
 
     public func acceptIncomingPairRequest() {
-        incomingPairRequest?.connection.acceptPairing()
+        guard let pairReq = incomingPairRequest else { return }
+        dismissPairingRequestNotification(deviceId: pairReq.info.deviceId)
+        pairReq.connection.acceptPairing()
         incomingPairRequest = nil
     }
 
     public func rejectIncomingPairRequest() {
-        incomingPairRequest?.connection.rejectPairing()
+        guard let pairReq = incomingPairRequest else { return }
+        dismissPairingRequestNotification(deviceId: pairReq.info.deviceId)
+        pairReq.connection.rejectPairing()
         incomingPairRequest = nil
     }
 
     public func unpair(deviceId: String) {
-        connectedDevices[deviceId]?.unpair()
+        dismissPairingRequestNotification(deviceId: deviceId)
+        if let conn = connectedDevices[deviceId] {
+            conn.unpair()
+            for plugin in self.plugins {
+                plugin.onDisconnected(connection: conn)
+            }
+            connectedDevices.removeValue(forKey: deviceId)
+        }
         trustStore.remove(deviceId: deviceId)
     }
 
@@ -211,5 +232,38 @@ public final class KDEConnectService: ObservableObject, UDPDiscoveryDelegate, TC
         if let conn = connectedDevices[deviceId] {
             pingPlugin.sendPing(to: conn)
         }
+    }
+
+    // MARK: - Notifications
+    private func showPairingRequestNotification(info: DeviceInfo, connection: DeviceConnection) {
+        let content = UNMutableNotificationContent()
+        content.title = "Pairing Request"
+        content.subtitle = info.deviceName
+        if let fp = connection.peerCertificateFingerprint {
+            content.body = "Verification Key:\n\(fp.prefix(23))..."
+        } else {
+            content.body = "\(info.deviceName) wants to pair with this Mac."
+        }
+        content.sound = .default
+        content.categoryIdentifier = "KDE_PAIR_REQUEST_CATEGORY"
+        content.userInfo = ["deviceId": info.deviceId]
+
+        let request = UNNotificationRequest(
+            identifier: "kde_pair_\(info.deviceId)",
+            content: content,
+            trigger: nil
+        )
+
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error = error {
+                KDLog("[KDEConnectService] Failed to post pairing notification: \(error)")
+            }
+        }
+    }
+
+    private func dismissPairingRequestNotification(deviceId: String) {
+        let id = "kde_pair_\(deviceId)"
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [id])
+        UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [id])
     }
 }

@@ -59,6 +59,7 @@ public final class DeviceConnection: @unchecked Sendable {
     public private(set) var peerDeviceInfo: DeviceInfo?
     public private(set) var peerCertificateFingerprint: String?
     public private(set) var pairState: PairState = .notPaired
+    public var isDisconnected: Bool { isClosed }
 
     public weak var delegate: DeviceConnectionDelegate?
     public var pendingPairingRequest = false
@@ -394,23 +395,46 @@ public final class DeviceConnection: @unchecked Sendable {
             }
         } else {
             // Unpair / reject
+            KDLog("[DeviceConnection] Peer rejected or unpaired from us")
             self.pairState = .notPaired
             TrustStore.shared.remove(deviceId: info.deviceId)
             delegate?.deviceConnection(self, didUpdatePairState: .notPaired)
+            connectionQueue.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                self?.disconnect()
+            }
         }
     }
 
     public func requestPairing() {
+        guard isEncrypted else {
+            KDLog("[DeviceConnection] TLS not ready yet, queuing pairing request")
+            pendingPairingRequest = true
+            return
+        }
         KDLog("[DeviceConnection] Sending pair request to \(peerDeviceInfo?.deviceName ?? "peer")")
         self.pairState = .requested
-        let packet = NetworkPacket(type: "kdeconnect.pair", body: ["pair": true])
+        let timestamp = Int64(Date().timeIntervalSince1970)
+        let packet = NetworkPacket(
+            type: "kdeconnect.pair",
+            body: [
+                "pair": true,
+                "timestamp": timestamp
+            ]
+        )
         send(packet: packet)
         delegate?.deviceConnection(self, didUpdatePairState: .requested)
     }
 
     public func acceptPairing() {
         KDLog("[DeviceConnection] Accepting pairing request from \(peerDeviceInfo?.deviceName ?? "peer")")
-        let packet = NetworkPacket(type: "kdeconnect.pair", body: ["pair": true])
+        let timestamp = Int64(Date().timeIntervalSince1970)
+        let packet = NetworkPacket(
+            type: "kdeconnect.pair",
+            body: [
+                "pair": true,
+                "timestamp": timestamp
+            ]
+        )
         send(packet: packet)
         completePairing()
     }
@@ -421,6 +445,9 @@ public final class DeviceConnection: @unchecked Sendable {
         send(packet: packet)
         self.pairState = .notPaired
         delegate?.deviceConnection(self, didUpdatePairState: .notPaired)
+        connectionQueue.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            self?.disconnect()
+        }
     }
 
     public func unpair() {
@@ -431,6 +458,9 @@ public final class DeviceConnection: @unchecked Sendable {
         self.pairState = .notPaired
         TrustStore.shared.remove(deviceId: info.deviceId)
         delegate?.deviceConnection(self, didUpdatePairState: .notPaired)
+        connectionQueue.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            self?.disconnect()
+        }
     }
 
     private func completePairing() {
@@ -455,9 +485,28 @@ public final class DeviceConnection: @unchecked Sendable {
             guard let self = self, let ctx = self.sslContext else { return }
 
             data.withUnsafeBytes { rawBuffer in
-                guard let baseAddress = rawBuffer.baseAddress else { return }
-                var written: Int = 0
-                _ = SSLWrite(ctx, baseAddress, data.count, &written)
+                guard var ptr = rawBuffer.baseAddress else { return }
+                var remaining = data.count
+                var retries = 0
+
+                while remaining > 0 && retries < 100 {
+                    var written: Int = 0
+                    let status = SSLWrite(ctx, ptr, remaining, &written)
+                    if written > 0 {
+                        remaining -= written
+                        ptr = ptr.advanced(by: written)
+                    }
+                    if remaining == 0 { break }
+                    if status == errSSLWouldBlock {
+                        usleep(2000) // 2ms
+                        retries += 1
+                        continue
+                    }
+                    if status != noErr {
+                        KDLog("[DeviceConnection] SSLWrite failed with status \(status)")
+                        break
+                    }
+                }
             }
         }
     }

@@ -50,11 +50,34 @@ public final class NotificationPlugin: NSObject, KDEConnectPlugin, UNUserNotific
             options: []
         )
 
-        UNUserNotificationCenter.current().setNotificationCategories([category])
+        let acceptAction = UNNotificationAction(
+            identifier: "KDE_PAIR_ACCEPT_ACTION",
+            title: "Accept",
+            options: [.foreground]
+        )
+
+        let rejectAction = UNNotificationAction(
+            identifier: "KDE_PAIR_REJECT_ACTION",
+            title: "Reject",
+            options: [.destructive]
+        )
+
+        let pairCategory = UNNotificationCategory(
+            identifier: "KDE_PAIR_REQUEST_CATEGORY",
+            actions: [acceptAction, rejectAction],
+            intentIdentifiers: [],
+            options: []
+        )
+
+        UNUserNotificationCenter.current().setNotificationCategories([category, pairCategory])
     }
 
     public func onConnected(connection: DeviceConnection) {
-        guard let deviceId = connection.peerDeviceInfo?.deviceId else { return }
+        guard let deviceId = connection.peerDeviceInfo?.deviceId,
+              let paired = TrustStore.shared.pairedDevice(for: deviceId),
+              paired.isNotificationSyncEnabled else {
+            return
+        }
         activeConnections[deviceId] = connection
 
         // Request active notifications from remote phone
@@ -134,6 +157,20 @@ public final class NotificationPlugin: NSObject, KDEConnectPlugin, UNUserNotific
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
+        if response.actionIdentifier == "KDE_PAIR_ACCEPT_ACTION" {
+            DispatchQueue.main.async {
+                KDEConnectService.shared.acceptIncomingPairRequest()
+            }
+            completionHandler()
+            return
+        } else if response.actionIdentifier == "KDE_PAIR_REJECT_ACTION" {
+            DispatchQueue.main.async {
+                KDEConnectService.shared.rejectIncomingPairRequest()
+            }
+            completionHandler()
+            return
+        }
+
         let userInfo = response.notification.request.content.userInfo
         guard let deviceId = userInfo["deviceId"] as? String,
               let connection = activeConnections[deviceId] else {
