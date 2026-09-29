@@ -19,6 +19,7 @@ public final class UDPDiscoveryService: @unchecked Sendable {
     private let queue = DispatchQueue(label: "org.kde.kdeconnect.udp", qos: .userInitiated)
     private var broadcastTimer: DispatchSourceTimer?
     private var isRunning = false
+    private var knownTargetIPs = Set<String>()
 
     public init() {}
 
@@ -120,6 +121,8 @@ public final class UDPDiscoveryService: @unchecked Sendable {
         let tcpPort = deviceInfo.tcpPort ?? Int(UDPDiscoveryService.defaultPort)
         KDLog("[UDPDiscovery] Received UDP discovery from: \(deviceInfo.deviceName) (\(deviceInfo.deviceId)) at \(senderIP):\(tcpPort)")
 
+        knownTargetIPs.insert(senderIP)
+
         // Respond directly to this device over UDP unicast so it reliably sees us
         sendDirectPresence(to: senderIP)
 
@@ -182,7 +185,12 @@ public final class UDPDiscoveryService: @unchecked Sendable {
 
     private func sendBroadcastData(_ data: Data) {
         guard socketFD >= 0 else { return }
-        let targets = getBroadcastAddresses()
+        var targets = getBroadcastAddresses()
+        for ip in knownTargetIPs {
+            if !targets.contains(ip) {
+                targets.append(ip)
+            }
+        }
         for ip in targets {
             sendDatagram(data: data, toIP: ip)
         }

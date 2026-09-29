@@ -91,10 +91,13 @@ public final class DeviceConnection: @unchecked Sendable {
         setsockopt(socketFD, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, socklen_t(MemoryLayout<Int32>.size))
     }
 
-    public func connect() {
-        connectionQueue.async { [weak self] in
-            guard let self = self else { return }
+    deinit {
+        KDLog("[DeviceConnection] Deallocating connection for \(host):\(port)")
+        cleanupSocket()
+    }
 
+    public func connect() {
+        connectionQueue.async { [self] in
             if self.isOutgoing {
                 self.performOutgoingConnection()
             } else {
@@ -114,6 +117,10 @@ public final class DeviceConnection: @unchecked Sendable {
 
         var nosigpipe: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &nosigpipe, socklen_t(MemoryLayout<Int32>.size))
+
+        var tv = timeval(tv_sec: 5, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
 
         var addr = sockaddr_in()
         addr.sin_family = sa_family_t(AF_INET)
@@ -173,27 +180,25 @@ public final class DeviceConnection: @unchecked Sendable {
 
     private func performIncomingHandshake() {
         KDLog("[DeviceConnection] Handling incoming connection from \(host):\(port)")
-        // Read initial plaintext connection packet
-        var buffer = [UInt8](repeating: 0, count: 4096)
+        var tv = timeval(tv_sec: 5, tv_usec: 0)
+        setsockopt(socketFD, SOL_SOCKET, SO_RCVTIMEO, &tv, socklen_t(MemoryLayout<timeval>.size))
+
+        // Read initial plaintext connection packet byte-by-byte so we NEVER consume TLS bytes
         var lineData = Data()
+        var byte: UInt8 = 0
 
-        while true {
-            let n = Darwin.read(socketFD, &buffer, buffer.count)
-            guard n > 0 else {
-                KDLog("[DeviceConnection] Incoming connection closed before initial packet")
-                self.disconnect()
-                return
-            }
-
-            lineData.append(buffer, count: n)
-            if let newlineIndex = lineData.firstIndex(of: UInt8(ascii: "\n")) {
-                let packetBytes = lineData.subdata(in: 0..<newlineIndex)
-                if let packet = try? NetworkPacket.unserialize(from: packetBytes) {
-                    KDLog("[DeviceConnection] Received incoming plaintext connection packet from \(packet.string(for: "deviceId") ?? "unknown")")
-                    self.targetDeviceId = packet.string(for: "deviceId")
-                }
+        while Darwin.read(socketFD, &byte, 1) == 1 {
+            if byte == UInt8(ascii: "\n") {
                 break
             }
+            lineData.append(byte)
+        }
+
+        if let packet = try? NetworkPacket.unserialize(from: lineData) {
+            KDLog("[DeviceConnection] Received incoming plaintext connection packet from \(packet.string(for: "deviceId") ?? "unknown")")
+            self.targetDeviceId = packet.string(for: "deviceId")
+        } else {
+            KDLog("[DeviceConnection] Failed to parse incoming connection packet: \(String(data: lineData, encoding: .utf8) ?? "")")
         }
 
         // Incoming connection starts SSL in CLIENT mode (KDE Connect v8 protocol inversion)
@@ -202,6 +207,10 @@ public final class DeviceConnection: @unchecked Sendable {
 
     private func startTLS(isServer: Bool) {
         KDLog("[DeviceConnection] Starting TLS handshake (isServer: \(isServer)) on socket \(socketFD)")
+
+        // Set non-blocking on socket so handshake uses polling with deadline
+        let flags = fcntl(socketFD, F_GETFL, 0)
+        _ = fcntl(socketFD, F_SETFL, flags | O_NONBLOCK)
 
         guard let ctx = SSLCreateContext(kCFAllocatorDefault, isServer ? .serverSide : .clientSide, .streamType) else {
             KDLog("[DeviceConnection] Failed to create SSLContext")
@@ -220,7 +229,7 @@ public final class DeviceConnection: @unchecked Sendable {
 
         while status == errSSLWouldBlock || status == errSSLPeerAuthCompleted || status == errSSLClientCertRequested {
             if Date() > deadline {
-                KDLog("[DeviceConnection] TLS Handshake timed out")
+                KDLog("[DeviceConnection] TLS Handshake timed out (status: \(status))")
                 disconnect()
                 return
             }
@@ -241,11 +250,6 @@ public final class DeviceConnection: @unchecked Sendable {
         KDLog("[DeviceConnection] TLS Handshake completed successfully! (isServer: \(isServer))")
 
         extractPeerCertificate()
-
-        // Set non-blocking on socket for dispatch source reading
-        let flags = fcntl(socketFD, F_GETFL, 0)
-        _ = fcntl(socketFD, F_SETFL, flags | O_NONBLOCK)
-
         setupReadSource()
 
         // Send full encrypted identity packet

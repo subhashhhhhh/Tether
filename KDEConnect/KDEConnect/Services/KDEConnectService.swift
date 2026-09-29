@@ -26,6 +26,7 @@ public final class KDEConnectService: ObservableObject, UDPDiscoveryDelegate, TC
     private let tcpListener = TCPListenerService()
     private var discoveredDeviceEndpoints: [String: (host: String, port: Int)] = [:]
     private var connectingDeviceIds = Set<String>()
+    private var pendingConnections: [String: DeviceConnection] = [:]
     private var plugins: [KDEConnectPlugin] = []
 
     private init() {
@@ -53,6 +54,10 @@ public final class KDEConnectService: ObservableObject, UDPDiscoveryDelegate, TC
         for conn in connectedDevices.values {
             conn.disconnect()
         }
+        for conn in pendingConnections.values {
+            conn.disconnect()
+        }
+        pendingConnections.removeAll()
         connectedDevices.removeAll()
         discoveredDevices.removeAll()
         connectingDeviceIds.removeAll()
@@ -78,7 +83,9 @@ public final class KDEConnectService: ObservableObject, UDPDiscoveryDelegate, TC
     // MARK: - TCP Listener Delegate
     nonisolated public func didAcceptConnection(socketFD: Int32, clientIP: String, clientPort: Int) {
         Task { @MainActor in
+            let key = "in_\(clientIP):\(clientPort)"
             let connection = DeviceConnection(socketFD: socketFD, host: clientIP, port: clientPort)
+            self.pendingConnections[key] = connection
             connection.delegate = self
             connection.connect()
         }
@@ -87,10 +94,14 @@ public final class KDEConnectService: ObservableObject, UDPDiscoveryDelegate, TC
     // MARK: - Connection Management
     public func connect(to deviceId: String, host: String, port: Int) {
         guard connectedDevices[deviceId] == nil else { return }
+        let key = "out_\(deviceId)"
+        guard pendingConnections[key] == nil else { return }
+
         connectingDeviceIds.insert(deviceId)
         KDLog("[KDEConnectService] Connecting to \(deviceId) at \(host):\(port)")
 
         let connection = DeviceConnection(host: host, port: port, targetDeviceId: deviceId, isOutgoing: true)
+        self.pendingConnections[key] = connection
         connection.delegate = self
         connection.connect()
     }
@@ -100,6 +111,8 @@ public final class KDEConnectService: ObservableObject, UDPDiscoveryDelegate, TC
         Task { @MainActor in
             guard let id = connection.peerDeviceInfo?.deviceId else { return }
             self.connectingDeviceIds.remove(id)
+            self.pendingConnections.removeValue(forKey: "out_\(id)")
+            self.pendingConnections.removeValue(forKey: "in_\(connection.host):\(connection.port)")
 
             if let old = self.connectedDevices[id], old !== connection {
                 old.disconnect()
@@ -118,10 +131,12 @@ public final class KDEConnectService: ObservableObject, UDPDiscoveryDelegate, TC
             let id = connection.peerDeviceInfo?.deviceId ?? connection.targetDeviceId
             if let id = id {
                 self.connectingDeviceIds.remove(id)
+                self.pendingConnections.removeValue(forKey: "out_\(id)")
                 if self.connectedDevices[id] === connection {
                     self.connectedDevices.removeValue(forKey: id)
                 }
             }
+            self.pendingConnections.removeValue(forKey: "in_\(connection.host):\(connection.port)")
 
             for plugin in self.plugins {
                 plugin.onDisconnected(connection: connection)
@@ -167,9 +182,11 @@ public final class KDEConnectService: ObservableObject, UDPDiscoveryDelegate, TC
         if let conn = connectedDevices[deviceInfo.deviceId] {
             conn.requestPairing()
         } else if let endpoint = discoveredDeviceEndpoints[deviceInfo.deviceId] {
+            let key = "out_\(deviceInfo.deviceId)"
             let connection = DeviceConnection(host: endpoint.host, port: endpoint.port, targetDeviceId: deviceInfo.deviceId, isOutgoing: true)
             connection.pendingPairingRequest = true
             connection.delegate = self
+            self.pendingConnections[key] = connection
             connectingDeviceIds.insert(deviceInfo.deviceId)
             connection.connect()
         }

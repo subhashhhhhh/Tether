@@ -47,9 +47,18 @@ public final class DeviceIdentity: @unchecked Sendable {
         self.deviceId = id!
         self.deviceName = name
 
-        // Load PKCS12
+        // Get or create dedicated private keychain to avoid touching login.keychain
+        let keychainURL = appSupport.appendingPathComponent("kdeconnect.keychain-db")
+        let dedicatedKeychain = Self.getOrCreateKeychain(at: keychainURL)
+
+        // Load PKCS12 into dedicated keychain
         let p12Data = (try? Data(contentsOf: p12URL)) ?? Data()
-        let options: [String: Any] = [kSecImportExportPassphrase as String: "kdeconnect"]
+        var options: [CFString: Any] = [
+            kSecImportExportPassphrase: "kdeconnect"
+        ]
+        if let kc = dedicatedKeychain {
+            options[kSecImportExportKeychain] = kc
+        }
         var items: CFArray?
         let status = SecPKCS12Import(p12Data as CFData, options as CFDictionary, &items)
 
@@ -75,6 +84,24 @@ public final class DeviceIdentity: @unchecked Sendable {
         self.certificateFingerprint = digest.map { String(format: "%02X", $0) }.joined(separator: ":")
     }
 
+    private static func getOrCreateKeychain(at url: URL) -> SecKeychain? {
+        var keychain: SecKeychain?
+        let path = url.path
+        if FileManager.default.fileExists(atPath: path) {
+            if SecKeychainOpen(path, &keychain) == errSecSuccess, let kc = keychain {
+                SecKeychainUnlock(kc, 10, "kdeconnect", true)
+                return kc
+            }
+        }
+
+        let status = SecKeychainCreate(path, 10, "kdeconnect", false, nil, &keychain)
+        if status == errSecSuccess, let kc = keychain {
+            SecKeychainUnlock(kc, 10, "kdeconnect", true)
+            return kc
+        }
+        return nil
+    }
+
     private static func generateCertificates(deviceId: String, p12URL: URL, certURL: URL, keyURL: URL) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -83,7 +110,8 @@ public final class DeviceIdentity: @unchecked Sendable {
         openssl ecparam -name prime256v1 -genkey -noout -out "\(keyURL.path)" && \
         chmod 600 "\(keyURL.path)" && \
         openssl req -new -x509 -key "\(keyURL.path)" -out "\(certURL.path)" -days 3650 -subj "/CN=\(deviceId)/O=KDE/OU=KDE Connect" && \
-        openssl pkcs12 -export -in "\(certURL.path)" -inkey "\(keyURL.path)" -out "\(p12URL.path)" -passout pass:kdeconnect
+        openssl pkcs12 -export -in "\(certURL.path)" -inkey "\(keyURL.path)" -out "\(p12URL.path)" -passout pass:kdeconnect && \
+        security import "\(p12URL.path)" -P kdeconnect -A
         """
         process.arguments = ["-c", script]
 
