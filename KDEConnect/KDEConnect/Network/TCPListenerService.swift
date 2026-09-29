@@ -31,11 +31,11 @@ public final class TCPListenerService: @unchecked Sendable {
         for port in TCPListenerService.minPort...TCPListenerService.maxPort {
             if bindAndListen(on: port) {
                 activePort = port
-                print("[TCPListener] Listening for incoming KDE Connect TCP connections on port \(port)")
+                KDLog("[TCPListener] Listening for incoming KDE Connect TCP connections on port \(port)")
                 return
             }
         }
-        print("[TCPListener] Failed to bind to any port in range \(TCPListenerService.minPort)-\(TCPListenerService.maxPort)")
+        KDLog("[TCPListener] Failed to bind to any port in range \(TCPListenerService.minPort)-\(TCPListenerService.maxPort)")
     }
 
     public func stop() {
@@ -110,7 +110,7 @@ public final class TCPListenerService: @unchecked Sendable {
         let clientIP = String(cString: inet_ntoa(clientAddr.sin_addr))
         let clientPort = Int(UInt16(bigEndian: clientAddr.sin_port))
 
-        print("[TCPListener] Accepted incoming connection from \(clientIP):\(clientPort)")
+        KDLog("[TCPListener] Accepted incoming connection from \(clientIP):\(clientPort)")
         delegate?.didAcceptConnection(socketFD: clientFD, clientIP: clientIP, clientPort: clientPort)
     }
 }

@@ -12,7 +12,7 @@ public final class TrustStore: ObservableObject, @unchecked Sendable {
     @Published public private(set) var pairedDevices: [String: PairedDevice] = [:]
 
     private let userDefaultsKey = "kdeconnect_paired_devices"
-    private let queue = DispatchQueue(label: "org.kde.kdeconnect.truststore", attributes: .concurrent)
+    private let lock = NSLock()
 
     private init() {
         loadDevices()
@@ -38,59 +38,59 @@ public final class TrustStore: ObservableObject, @unchecked Sendable {
     }
 
     public func isTrusted(deviceId: String) -> Bool {
-        queue.sync {
+        lock.withLock {
             pairedDevices[deviceId] != nil
         }
     }
 
     public func pairedDevice(for deviceId: String) -> PairedDevice? {
-        queue.sync {
+        lock.withLock {
             pairedDevices[deviceId]
         }
     }
 
     public func add(device: PairedDevice) {
-        queue.async(flags: .barrier) {
+        lock.withLock {
             self.pairedDevices[device.deviceId] = device
             self.saveDevices()
-            DispatchQueue.main.async {
-                self.objectWillChange.send()
-            }
+        }
+        DispatchQueue.main.async {
+            self.objectWillChange.send()
         }
     }
 
     public func remove(deviceId: String) {
-        queue.async(flags: .barrier) {
+        lock.withLock {
             self.pairedDevices.removeValue(forKey: deviceId)
             self.saveDevices()
-            DispatchQueue.main.async {
-                self.objectWillChange.send()
-            }
+        }
+        DispatchQueue.main.async {
+            self.objectWillChange.send()
         }
     }
 
     public func updateLastSeen(deviceId: String) {
-        queue.async(flags: .barrier) {
+        lock.withLock {
             guard var device = self.pairedDevices[deviceId] else { return }
             device.lastSeenDate = Date()
             self.pairedDevices[deviceId] = device
             self.saveDevices()
-            DispatchQueue.main.async {
-                self.objectWillChange.send()
-            }
+        }
+        DispatchQueue.main.async {
+            self.objectWillChange.send()
         }
     }
 
     public func updateSettings(deviceId: String, clipboard: Bool, notifications: Bool) {
-        queue.async(flags: .barrier) {
+        lock.withLock {
             guard var device = self.pairedDevices[deviceId] else { return }
             device.isClipboardSyncEnabled = clipboard
             device.isNotificationSyncEnabled = notifications
             self.pairedDevices[deviceId] = device
             self.saveDevices()
-            DispatchQueue.main.async {
-                self.objectWillChange.send()
-            }
+        }
+        DispatchQueue.main.async {
+            self.objectWillChange.send()
         }
     }
 }

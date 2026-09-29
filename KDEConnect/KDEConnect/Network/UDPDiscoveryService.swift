@@ -49,7 +49,7 @@ public final class UDPDiscoveryService: @unchecked Sendable {
     private func setupSocket(port: UInt16) {
         let fd = socket(AF_INET, SOCK_DGRAM, 0)
         guard fd >= 0 else {
-            print("[UDPDiscovery] Failed to create UDP socket: \(errno)")
+            KDLog("[UDPDiscovery] Failed to create UDP socket: \(errno)")
             return
         }
 
@@ -72,7 +72,7 @@ public final class UDPDiscoveryService: @unchecked Sendable {
         }
 
         if bindResult < 0 {
-            print("[UDPDiscovery] Failed to bind UDP socket on port \(port): \(errno)")
+            KDLog("[UDPDiscovery] Failed to bind UDP socket on port \(port): \(errno)")
             close(fd)
             return
         }
@@ -88,7 +88,7 @@ public final class UDPDiscoveryService: @unchecked Sendable {
         }
         source.resume()
         self.readSource = source
-        print("[UDPDiscovery] Listening for UDP discovery broadcasts on port \(port)")
+        KDLog("[UDPDiscovery] Listening for UDP discovery broadcasts on port \(port)")
     }
 
     private func readDatagram() {
@@ -118,7 +118,10 @@ public final class UDPDiscoveryService: @unchecked Sendable {
         }
 
         let tcpPort = deviceInfo.tcpPort ?? Int(UDPDiscoveryService.defaultPort)
-        print("[UDPDiscovery] Discovered device: \(deviceInfo.deviceName) (\(deviceInfo.deviceId)) at \(senderIP):\(tcpPort)")
+        KDLog("[UDPDiscovery] Received UDP discovery from: \(deviceInfo.deviceName) (\(deviceInfo.deviceId)) at \(senderIP):\(tcpPort)")
+
+        // Respond directly to this device over UDP unicast so it reliably sees us
+        sendDirectPresence(to: senderIP)
 
         delegate?.didDiscoverDevice(host: senderIP, port: tcpPort, deviceInfo: deviceInfo)
     }
@@ -132,9 +135,18 @@ public final class UDPDiscoveryService: @unchecked Sendable {
         }
     }
 
+    public func sendDirectPresence(to host: String, tcpPort: Int = 1716) {
+        let packet = DeviceIdentity.shared.toDeviceInfo(tcpPort: tcpPort).toUdpDiscoveryPacket()
+        guard let data = try? packet.serialize() else { return }
+
+        queue.async {
+            self.sendDatagram(data: data, toIP: host)
+        }
+    }
+
     private func startBroadcasting() {
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now(), repeating: .seconds(5))
+        timer.schedule(deadline: .now(), repeating: .seconds(4))
         timer.setEventHandler { [weak self] in
             self?.broadcastPresence()
         }
@@ -142,17 +154,53 @@ public final class UDPDiscoveryService: @unchecked Sendable {
         self.broadcastTimer = timer
     }
 
+    private func getBroadcastAddresses() -> [String] {
+        var addresses = ["255.255.255.255"]
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else { return addresses }
+        defer { freeifaddrs(ifaddr) }
+
+        for ptr in sequence(first: firstAddr, next: { $0.pointee.ifa_next }) {
+            let flags = Int32(ptr.pointee.ifa_flags)
+            let isUp = (flags & IFF_UP) != 0
+            let isRunning = (flags & IFF_RUNNING) != 0
+            let isLoopback = (flags & IFF_LOOPBACK) != 0
+
+            guard isUp && isRunning && !isLoopback else { continue }
+            guard let addr = ptr.pointee.ifa_addr, addr.pointee.sa_family == sa_family_t(AF_INET) else { continue }
+
+            if let broadaddr = ptr.pointee.ifa_dstaddr, broadaddr.pointee.sa_family == sa_family_t(AF_INET) {
+                let bAddr = broadaddr.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee }
+                let ipStr = String(cString: inet_ntoa(bAddr.sin_addr))
+                if !addresses.contains(ipStr) {
+                    addresses.append(ipStr)
+                }
+            }
+        }
+        return addresses
+    }
+
     private func sendBroadcastData(_ data: Data) {
         guard socketFD >= 0 else { return }
+        let targets = getBroadcastAddresses()
+        for ip in targets {
+            sendDatagram(data: data, toIP: ip)
+        }
+    }
 
-        var broadcastAddr = sockaddr_in()
-        broadcastAddr.sin_family = sa_family_t(AF_INET)
-        broadcastAddr.sin_port = in_port_t(UDPDiscoveryService.defaultPort).bigEndian
-        broadcastAddr.sin_addr.s_addr = in_addr_t(INADDR_BROADCAST)
+    private func sendDatagram(data: Data, toIP ip: String) {
+        guard socketFD >= 0 else { return }
+        var targetAddr = sockaddr_in()
+        targetAddr.sin_family = sa_family_t(AF_INET)
+        targetAddr.sin_port = in_port_t(UDPDiscoveryService.defaultPort).bigEndian
+
+        if inet_pton(AF_INET, ip, &targetAddr.sin_addr) <= 0 {
+            return
+        }
 
         data.withUnsafeBytes { rawBuffer in
             guard let baseAddress = rawBuffer.baseAddress else { return }
-            withUnsafePointer(to: &broadcastAddr) {
+            withUnsafePointer(to: &targetAddr) {
                 $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
                     _ = sendto(self.socketFD, baseAddress, data.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
                 }
