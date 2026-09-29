@@ -283,18 +283,32 @@ public final class DeviceConnection: @unchecked Sendable {
             if bytesRead > 0 {
                 lock.withLock {
                     readBuffer.append(buffer, count: bytesRead)
+                    if readBuffer.count > 1_000_000 {
+                        readBuffer.removeAll()
+                    }
                     processReadBuffer()
                 }
             }
 
-            if status == errSSLWouldBlock || bytesRead == 0 {
+            // Check connection termination FIRST before checking wouldBlock or bytesRead == 0
+            if status == errSSLClosedGraceful || status == errSSLClosedAbort {
+                KDLog("[DeviceConnection] SSL connection closed by peer (status: \(status)) on socket \(socketFD)")
+                disconnect()
+                return
+            }
+
+            if status == errSSLWouldBlock {
                 break
             }
 
-            if status == errSSLClosedGraceful || status == errSSLClosedAbort {
-                KDLog("[DeviceConnection] SSL connection closed by peer (status: \(status))")
+            if status != noErr {
+                KDLog("[DeviceConnection] SSLRead fatal error: \(status) on socket \(socketFD)")
                 disconnect()
                 return
+            }
+
+            if bytesRead == 0 {
+                break
             }
         }
     }

@@ -144,11 +144,14 @@ public struct MenuBarView: View {
         }
         .padding(12)
         .frame(width: 290)
+        .onAppear {
+            service.refreshDiscovery()
+        }
     }
 
     @ViewBuilder
     private func deviceRow(for device: PairedDevice) -> some View {
-        let isConnected = service.connectedDevices[device.deviceId] != nil
+        let isConnected = (service.connectedDevices[device.deviceId]?.isDisconnected == false)
         let battery = batteryPlugin.deviceBatteries[device.deviceId]
 
         VStack(alignment: .leading, spacing: 4) {

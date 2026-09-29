@@ -19,7 +19,8 @@ struct KDEConnectApp: App {
             MenuBarView()
         } label: {
             let iconName: String = {
-                if !service.connectedDevices.isEmpty {
+                let hasPairedAndConnected = service.connectedDevices.values.contains { !$0.isDisconnected && $0.pairState == .paired }
+                if hasPairedAndConnected {
                     return "iphone.badge.checkmark"
                 } else if service.isRunning {
                     return "antenna.radiowaves.left.and.right"

@@ -20,6 +20,7 @@ public final class UDPDiscoveryService: @unchecked Sendable {
     private var broadcastTimer: DispatchSourceTimer?
     private var isRunning = false
     private var knownTargetIPs = Set<String>()
+    private var lastDirectResponse: [String: Date] = [:]
 
     public init() {}
 
@@ -123,8 +124,12 @@ public final class UDPDiscoveryService: @unchecked Sendable {
 
         knownTargetIPs.insert(senderIP)
 
-        // Respond directly to this device over UDP unicast so it reliably sees us
-        sendDirectPresence(to: senderIP)
+        // Only send direct unicast presence if we haven't responded to this sender recently
+        let lastSent = lastDirectResponse[senderIP] ?? .distantPast
+        if Date().timeIntervalSince(lastSent) > 15 {
+            lastDirectResponse[senderIP] = Date()
+            sendDirectPresence(to: senderIP)
+        }
 
         delegate?.didDiscoverDevice(host: senderIP, port: tcpPort, deviceInfo: deviceInfo)
     }
@@ -149,7 +154,7 @@ public final class UDPDiscoveryService: @unchecked Sendable {
 
     private func startBroadcasting() {
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now(), repeating: .seconds(4))
+        timer.schedule(deadline: .now(), repeating: .seconds(15))
         timer.setEventHandler { [weak self] in
             self?.broadcastPresence()
         }

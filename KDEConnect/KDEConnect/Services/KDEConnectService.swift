@@ -74,8 +74,11 @@ public final class KDEConnectService: ObservableObject, UDPDiscoveryDelegate, TC
                 self.discoveredDevices.append(deviceInfo)
             }
 
-            // Immediately initiate connection to establish link so phone sees Mac as Available
-            if self.connectedDevices[deviceInfo.deviceId] == nil && !self.connectingDeviceIds.contains(deviceInfo.deviceId) {
+            if let conn = self.connectedDevices[deviceInfo.deviceId], !conn.isDisconnected {
+                return
+            }
+
+            if !self.connectingDeviceIds.contains(deviceInfo.deviceId) {
                 self.connect(to: deviceInfo.deviceId, host: host, port: port)
             }
         }
@@ -116,6 +119,20 @@ public final class KDEConnectService: ObservableObject, UDPDiscoveryDelegate, TC
             self.pendingConnections.removeValue(forKey: "in_\(connection.host):\(connection.port)")
 
             if let old = self.connectedDevices[id], old !== connection {
+                // If old connection is actively awaiting pairing confirmation, do NOT drop it!
+                if old.pairState == .requested && !old.isDisconnected {
+                    KDLog("[KDEConnectService] Active connection is awaiting pairing response. Disconnecting redundant duplicate connection.")
+                    connection.disconnect()
+                    return
+                }
+
+                // If old connection is already paired and alive, keep it
+                if old.pairState == .paired && !old.isDisconnected {
+                    KDLog("[KDEConnectService] Active connection is already paired and healthy. Disconnecting redundant duplicate connection.")
+                    connection.disconnect()
+                    return
+                }
+
                 old.disconnect()
             }
             self.connectedDevices[id] = connection
@@ -232,6 +249,10 @@ public final class KDEConnectService: ObservableObject, UDPDiscoveryDelegate, TC
         if let conn = connectedDevices[deviceId] {
             pingPlugin.sendPing(to: conn)
         }
+    }
+
+    public func refreshDiscovery() {
+        udpDiscovery.broadcastPresence()
     }
 
     // MARK: - Notifications
