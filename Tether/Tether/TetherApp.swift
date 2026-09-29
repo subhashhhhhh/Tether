@@ -37,5 +37,10 @@ struct TetherApp: App {
         Settings {
             SettingsView()
         }
+
+        WindowGroup(id: "main") {
+            MainWindowView()
+        }
+        .defaultSize(width: 820, height: 560)
     }
 }

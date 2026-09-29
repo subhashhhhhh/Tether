@@ -87,7 +87,18 @@ public struct DeviceInfo: Codable, Sendable, Identifiable {
         // Cellular signal reports.
         "kdeconnect.connectivity_report",
         // Call and message events.
-        "kdeconnect.telephony"
+        "kdeconnect.telephony",
+        // File, text, and URL sharing
+        "kdeconnect.share.request",
+        "kdeconnect.share.request.update",
+        // Remote input and presenter
+        "kdeconnect.mousepad.request",
+        "kdeconnect.presenter",
+        // SMS messages and attachments
+        "kdeconnect.sms.messages",
+        "kdeconnect.sms.attachment_file",
+        // Remote commands
+        "kdeconnect.runcommand.request"
     ]
 
     /// Packet types we emit. A peer only accepts a type that appears here.
@@ -106,7 +117,20 @@ public struct DeviceInfo: Codable, Sendable, Identifiable {
         // Peer volume queries and changes.
         "kdeconnect.systemvolume.request",
         // Lock and lock-state requests.
-        "kdeconnect.lock.request"
+        "kdeconnect.lock.request",
+        // File, text, and URL sharing
+        "kdeconnect.share.request",
+        // Remote input keyboard state and echo
+        "kdeconnect.mousepad.keyboardstate",
+        "kdeconnect.mousepad.echo",
+        // SMS requests
+        "kdeconnect.sms.request",
+        "kdeconnect.sms.request_conversations",
+        "kdeconnect.sms.request_conversation",
+        "kdeconnect.sms.request_attachment",
+        // Remote commands
+        "kdeconnect.runcommand",
+        "kdeconnect.runcommand.output"
     ]
 
     // Create UDP discovery packet

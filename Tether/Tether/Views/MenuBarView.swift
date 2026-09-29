@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 public struct MenuBarView: View {
     @ObservedObject var service = TetherService.shared
@@ -12,13 +13,17 @@ public struct MenuBarView: View {
     @ObservedObject var mediaPlugin: MediaControlPlugin
     @ObservedObject var connectivityPlugin: ConnectivityReportPlugin
     @ObservedObject var remoteVolumePlugin: RemoteVolumePlugin
+    @ObservedObject var sharePlugin: SharePlugin
+    @State private var isDropTarget = false
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.openWindow) private var openWindow
 
     public init() {
         self.batteryPlugin = TetherService.shared.batteryPlugin
         self.mediaPlugin = TetherService.shared.mediaControlPlugin
         self.connectivityPlugin = TetherService.shared.connectivityReportPlugin
         self.remoteVolumePlugin = TetherService.shared.remoteVolumePlugin
+        self.sharePlugin = TetherService.shared.sharePlugin
     }
 
     public var body: some View {
@@ -128,10 +133,25 @@ public struct MenuBarView: View {
                 }
             }
 
+            // Transfers Section
+            if !sharePlugin.transfers.isEmpty {
+                Divider()
+                transfersSection
+            }
+
             Divider()
 
             // Footer
             HStack {
+                Button("Open Tether") {
+                    openWindow(id: "main")
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
+
+                Spacer()
+
                 Button("Settings...") {
                     openSettings()
                 }
@@ -150,6 +170,15 @@ public struct MenuBarView: View {
         }
         .padding(12)
         .frame(width: 290)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(Color.accentColor, lineWidth: isDropTarget ? 2 : 0)
+                .background(isDropTarget ? Color.accentColor.opacity(0.1) : Color.clear)
+                .allowsHitTesting(false)
+        )
+        .onDrop(of: [.fileURL], isTargeted: $isDropTarget) { providers in
+            handleDroppedFiles(providers)
+        }
         .onAppear {
             service.refreshDiscovery()
             // Pull fresh media/volume state each time the popover opens.
@@ -197,7 +226,7 @@ public struct MenuBarView: View {
             }
 
             if isConnected {
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     Button(action: {
                         service.sendPing(to: device.deviceId)
                     }) {
@@ -207,9 +236,27 @@ public struct MenuBarView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.mini)
 
+                    Button(action: {
+                        sendFilesDialog(for: device.deviceId)
+                    }) {
+                        Label("Send File", systemImage: "paperplane")
+                            .font(.system(size: 10))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.mini)
+
                     Spacer()
 
                     Menu {
+                        Button("Send File...") {
+                            sendFilesDialog(for: device.deviceId)
+                        }
+                        Button("Send Clipboard to Phone") {
+                            if let string = NSPasteboard.general.string(forType: .string), !string.isEmpty {
+                                service.sendText(string, to: device.deviceId)
+                            }
+                        }
+                        Divider()
                         Button("Ring Phone") {
                             service.ringPhone(device.deviceId)
                         }
@@ -350,4 +397,115 @@ public struct MenuBarView: View {
             .frame(height: 10, alignment: .bottom)
         }
     }
+
+    @ViewBuilder
+    private var transfersSection: some View {
+        let recent = Array(sharePlugin.transfers.prefix(3))
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text("TRANSFERS")
+                    .font(.system(size: 10, weight: .bold))
+                    .foregroundColor(.secondary)
+                Spacer()
+                if let count = sharePlugin.transfers.count as Int?, count > 3 {
+                    Text("\(count) total")
+                        .font(.system(size: 9))
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            ForEach(recent) { item in
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Image(systemName: item.direction == .outgoing ? "arrow.up.circle.fill" : "arrow.down.circle.fill")
+                            .foregroundColor(item.status == .completed ? .green : (item.status == .transferring ? .accentColor : .secondary))
+                            .font(.system(size: 11))
+
+                        Text(item.filename)
+                            .font(.system(size: 10, weight: .medium))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+
+                        Spacer()
+
+                        switch item.status {
+                        case .transferring:
+                            Text(item.formattedProgress)
+                                .font(.system(size: 9))
+                                .foregroundColor(.secondary)
+                        case .completed:
+                            Text("Done")
+                                .font(.system(size: 9))
+                                .foregroundColor(.green)
+                        case .failed:
+                            Text("Failed")
+                                .font(.system(size: 9))
+                                .foregroundColor(.red)
+                        case .cancelled:
+                            Text("Cancelled")
+                                .font(.system(size: 9))
+                                .foregroundColor(.secondary)
+                        case .queued:
+                            Text("Queued")
+                                .font(.system(size: 9))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+
+                    if item.status == .transferring {
+                        ProgressView(value: item.progress)
+                            .progressViewStyle(.linear)
+                            .controlSize(.mini)
+                    }
+                }
+                .padding(.vertical, 1)
+            }
+        }
+    }
+
+    private func sendFilesDialog(for deviceId: String) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.prompt = "Send"
+        panel.message = "Choose files to send to phone"
+        panel.begin { response in
+            if response == .OK && !panel.urls.isEmpty {
+                service.sendFiles(panel.urls, to: deviceId)
+            }
+        }
+    }
+
+    private func handleDroppedFiles(_ providers: [NSItemProvider]) -> Bool {
+        guard let firstConnected = service.connectedDevices.first(where: { !$0.value.isDisconnected && $0.value.pairState == .paired }) else {
+            return false
+        }
+        let deviceId = firstConnected.key
+
+        var urls: [URL] = []
+        let group = DispatchGroup()
+
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                group.enter()
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, error in
+                    defer { group.leave() }
+                    if let data = item as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) {
+                        urls.append(url)
+                    } else if let url = item as? URL {
+                        urls.append(url)
+                    }
+                }
+            }
+        }
+
+        group.notify(queue: .main) {
+            if !urls.isEmpty {
+                service.sendFiles(urls, to: deviceId)
+            }
+        }
+        return true
+    }
 }
+

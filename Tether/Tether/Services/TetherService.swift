@@ -28,6 +28,11 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, TCPLis
     public let connectivityReportPlugin = ConnectivityReportPlugin()
     public let telephonyPlugin = TelephonyPlugin()
     public let remoteVolumePlugin = RemoteVolumePlugin()
+    public let sharePlugin = SharePlugin()
+    public let mousepadPlugin = MousepadPlugin()
+    public let presenterPlugin = PresenterPlugin()
+    public let smsPlugin = SMSPlugin()
+    public let runCommandPlugin = RunCommandPlugin()
 
     private let udpDiscovery = UDPDiscoveryService()
     private let tcpListener = TCPListenerService()
@@ -49,7 +54,12 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, TCPLis
             lockDevicePlugin,
             connectivityReportPlugin,
             telephonyPlugin,
-            remoteVolumePlugin
+            remoteVolumePlugin,
+            sharePlugin,
+            mousepadPlugin,
+            presenterPlugin,
+            smsPlugin,
+            runCommandPlugin
         ]
         udpDiscovery.delegate = self
         tcpListener.delegate = self
@@ -362,6 +372,21 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, TCPLis
 
     public func refreshDiscovery() {
         udpDiscovery.broadcastPresence()
+    }
+
+    public func sendFiles(_ urls: [URL], to deviceId: String) {
+        guard let conn = connectedDevices[deviceId] else { return }
+        sharePlugin.sendFiles(urls, to: conn)
+    }
+
+    public func sendText(_ text: String, to deviceId: String) {
+        guard let conn = connectedDevices[deviceId] else { return }
+        sharePlugin.sendText(text, to: conn)
+    }
+
+    public func sendURL(_ url: URL, to deviceId: String) {
+        guard let conn = connectedDevices[deviceId] else { return }
+        sharePlugin.sendURL(url, to: conn)
     }
 
     // MARK: - Notifications

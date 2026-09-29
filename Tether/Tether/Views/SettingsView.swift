@@ -19,12 +19,17 @@ public struct SettingsView: View {
                     Label("General", systemImage: "gearshape")
                 }
 
+            remoteInputTab
+                .tabItem {
+                    Label("Remote Input", systemImage: "cursorarrow.rays")
+                }
+
             devicesTab
                 .tabItem {
                     Label("Devices", systemImage: "iphone.and.arrow.forward")
                 }
         }
-        .frame(width: 480, height: 320)
+        .frame(width: 500, height: 350)
         .padding()
     }
 
@@ -104,6 +109,74 @@ public struct SettingsView: View {
                     }
                 }
             }
+        }
+    }
+
+    @State private var isAccessibilityTrusted = InputSynthesizer.shared.isAccessibilityTrusted
+
+    private var remoteInputTab: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Remote Input & Presentation")
+                .font(.headline)
+
+            Text("Allow connected phones to use your Mac trackpad, mouse clicks, scrolling, keyboard input, and the presentation laser pointer overlay.")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+
+            GroupBox {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Image(systemName: isAccessibilityTrusted ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                            .font(.system(size: 20))
+                            .foregroundColor(isAccessibilityTrusted ? .green : .orange)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Accessibility Permission")
+                                .font(.body.weight(.medium))
+                            Text(isAccessibilityTrusted ? "Granted. Mouse and keyboard control are active." : "Required for controlling cursor and typing.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+
+                        Spacer()
+
+                        Text(isAccessibilityTrusted ? "Active" : "Not Granted")
+                            .font(.caption.weight(.semibold))
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(isAccessibilityTrusted ? Color.green.opacity(0.15) : Color.orange.opacity(0.15))
+                            .foregroundColor(isAccessibilityTrusted ? .green : .orange)
+                            .cornerRadius(6)
+                    }
+
+                    Divider()
+
+                    HStack(spacing: 12) {
+                        Button("Check / Request Access") {
+                            InputSynthesizer.shared.promptAccessibilityPermission()
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                                isAccessibilityTrusted = InputSynthesizer.shared.isAccessibilityTrusted
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.regular)
+
+                        Button("Open System Settings") {
+                            InputSynthesizer.shared.openAccessibilitySettings()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.regular)
+
+                        Spacer()
+                    }
+                }
+                .padding(8)
+            }
+
+            Spacer()
+        }
+        .onAppear {
+            isAccessibilityTrusted = InputSynthesizer.shared.isAccessibilityTrusted
         }
     }
 }

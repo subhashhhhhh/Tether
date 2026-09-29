@@ -83,38 +83,84 @@ public struct NetworkPacket: Codable, Sendable {
     public init(type: String, body: [String: Any] = [:], payloadSize: Int64? = nil, payloadTransferInfo: [String: Any]? = nil) {
         self.id = Int64(Date().timeIntervalSince1970 * 1000)
         self.type = type
-        self.body = body.mapValues { AnyCodable($0) }
+        self.body = body.mapValues { val in
+            if let ac = val as? AnyCodable { return ac }
+            return AnyCodable(val)
+        }
         self.payloadSize = payloadSize
-        self.payloadTransferInfo = payloadTransferInfo?.mapValues { AnyCodable($0) }
+        self.payloadTransferInfo = payloadTransferInfo?.mapValues { val in
+            if let ac = val as? AnyCodable { return ac }
+            return AnyCodable(val)
+        }
+    }
+
+    private func unwrappedValue(for key: String) -> Any? {
+        var current = body[key]?.value
+        while let nested = current as? AnyCodable {
+            current = nested.value
+        }
+        return current
     }
 
     // Body getters
     public func string(for key: String) -> String? {
-        body[key]?.value as? String
+        unwrappedValue(for: key) as? String
     }
 
     public func bool(for key: String, default defaultValue: Bool = false) -> Bool {
-        (body[key]?.value as? Bool) ?? defaultValue
+        (unwrappedValue(for: key) as? Bool) ?? defaultValue
     }
 
     public func int(for key: String, default defaultValue: Int = 0) -> Int {
-        if let intVal = body[key]?.value as? Int {
+        let raw = unwrappedValue(for: key)
+        if let intVal = raw as? Int {
             return intVal
         }
-        if let int64Val = body[key]?.value as? Int64 {
+        if let int64Val = raw as? Int64 {
             return Int(int64Val)
+        }
+        if let num = raw as? NSNumber {
+            return num.intValue
         }
         return defaultValue
     }
 
     public func int64(for key: String, default defaultValue: Int64 = 0) -> Int64 {
-        if let int64Val = body[key]?.value as? Int64 {
+        let raw = unwrappedValue(for: key)
+        if let int64Val = raw as? Int64 {
             return int64Val
         }
-        if let intVal = body[key]?.value as? Int {
+        if let intVal = raw as? Int {
             return Int64(intVal)
         }
+        if let num = raw as? NSNumber {
+            return num.int64Value
+        }
         return defaultValue
+    }
+
+    public func double(for key: String, default defaultValue: Double = 0.0) -> Double {
+        let raw = unwrappedValue(for: key)
+        if let val = raw as? Double {
+            return val
+        }
+        if let val = raw as? Float {
+            return Double(val)
+        }
+        if let num = raw as? NSNumber {
+            return num.doubleValue
+        }
+        if let val = raw as? Int {
+            return Double(val)
+        }
+        if let val = raw as? Int64 {
+            return Double(val)
+        }
+        return defaultValue
+    }
+
+    public func has(_ key: String) -> Bool {
+        body[key] != nil
     }
 
     public func stringArray(for key: String) -> [String] {

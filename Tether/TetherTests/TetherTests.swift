@@ -147,7 +147,14 @@ struct TetherTests {
             "kdeconnect.systemvolume",
             "kdeconnect.lock",
             "kdeconnect.connectivity_report",
-            "kdeconnect.telephony"
+            "kdeconnect.telephony",
+            "kdeconnect.share.request",
+            "kdeconnect.share.request.update",
+            "kdeconnect.mousepad.request",
+            "kdeconnect.presenter",
+            "kdeconnect.sms.messages",
+            "kdeconnect.sms.attachment_file",
+            "kdeconnect.runcommand.request"
         ] {
             #expect(incoming.contains(type), "\(type) must be receivable")
         }
@@ -156,7 +163,16 @@ struct TetherTests {
             "kdeconnect.mpris.request",
             "kdeconnect.findmyphone.request",
             "kdeconnect.systemvolume.request",
-            "kdeconnect.lock.request"
+            "kdeconnect.lock.request",
+            "kdeconnect.share.request",
+            "kdeconnect.mousepad.keyboardstate",
+            "kdeconnect.mousepad.echo",
+            "kdeconnect.sms.request",
+            "kdeconnect.sms.request_conversations",
+            "kdeconnect.sms.request_conversation",
+            "kdeconnect.sms.request_attachment",
+            "kdeconnect.runcommand",
+            "kdeconnect.runcommand.output"
         ] {
             #expect(outgoing.contains(type), "\(type) must be sendable")
         }
@@ -166,6 +182,85 @@ struct TetherTests {
         #expect(!incoming.contains("kdeconnect.findmyphone.request"))
         #expect(!outgoing.contains("kdeconnect.mpris"))
         #expect(!outgoing.contains("kdeconnect.telephony"))
+        #expect(!incoming.contains("kdeconnect.mousepad.keyboardstate"))
+        #expect(!outgoing.contains("kdeconnect.mousepad.request"))
+        #expect(!outgoing.contains("kdeconnect.sms.messages"))
+        #expect(!incoming.contains("kdeconnect.sms.request"))
+    }
+
+    @Test func testSMSMessageParsing() throws {
+        let smsJSON = """
+        {
+            "id": 100,
+            "type": "kdeconnect.sms.messages",
+            "body": {
+                "version": 2,
+                "messages": [
+                    {
+                        "event": 1,
+                        "body": "Hello from Android!",
+                        "addresses": [{"address": "+15551234567"}],
+                        "date": 1690000000000,
+                        "type": 1,
+                        "thread_id": 42,
+                        "read": true,
+                        "attachments": [
+                            {
+                                "part_id": 1,
+                                "mime_type": "image/jpeg",
+                                "unique_identifier": "img_001.jpg"
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+        """
+        let packet = try NetworkPacket.unserialize(from: Data(smsJSON.utf8))
+        let messages = packet.objectArray(for: "messages")
+        #expect(messages.count == 1)
+
+        let parsed = SMSMessage.from(dictionary: messages[0])
+        #expect(parsed != nil)
+        #expect(parsed?.body == "Hello from Android!")
+        #expect(parsed?.addresses == ["+15551234567"])
+        #expect(parsed?.threadId == 42)
+        #expect(parsed?.type == 1)
+        #expect(parsed?.isOutgoing == false)
+        #expect(parsed?.read == true)
+        #expect(parsed?.attachments.count == 1)
+        #expect(parsed?.attachments[0].uniqueIdentifier == "img_001.jpg")
+    }
+
+    @Test func testRemoteCommandExecution() async throws {
+        let plugin = RunCommandPlugin()
+        let cmd = RemoteCommand(id: "test_echo", name: "Echo Test", command: "echo 'Antigravity Test'")
+        plugin.addCommand(cmd)
+
+        plugin.startCommand(key: "test_echo", connection: nil)
+
+        // Give process a moment to execute
+        try await Task.sleep(nanoseconds: 300_000_000)
+
+        let logs = plugin.commandLogs["test_echo"] ?? []
+        #expect(logs.contains { $0.contains("Antigravity Test") })
+        #expect(logs.contains { $0.contains("Finished with exit code 0") })
+    }
+
+    @Test func testDoublePacketAccessor() throws {
+        let packet = NetworkPacket(
+            type: "kdeconnect.mousepad.request",
+            body: [
+                "dx": AnyCodable(12.5),
+                "dy": AnyCodable(-4.25),
+                "singleclick": AnyCodable(true)
+            ]
+        )
+        #expect(packet.double(for: "dx") == 12.5)
+        #expect(packet.double(for: "dy") == -4.25)
+        #expect(packet.bool(for: "singleclick") == true)
+        #expect(packet.has("dx") == true)
+        #expect(packet.has("nonexistent") == false)
     }
 
     /// Nested JSON arrives shallowly typed through `AnyCodable`, so the object
