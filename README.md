@@ -115,10 +115,10 @@ git clone https://github.com/subhashhhhhh/Tether.git
 cd Tether
 
 # Build the Release configuration
-xcodebuild -project Tether/Tether.xcodeproj -scheme Tether -configuration Release build
+xcodebuild -project Tether.xcodeproj -scheme Tether -configuration Release build
 
 # Run unit tests
-xcodebuild test -project Tether/Tether.xcodeproj -scheme Tether -destination "platform=macOS"
+xcodebuild test -project Tether.xcodeproj -scheme Tether -destination "platform=macOS"
 ```
 
 The compiled application bundle will be located at:
