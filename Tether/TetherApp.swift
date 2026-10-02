@@ -17,7 +17,7 @@ struct TetherApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra("Tether", systemImage: appModel.statusIconName) {
+        MenuBarExtra("Tether", image: appModel.statusMenuBarImageName) {
             MenuBarView(appModel: appModel)
         }
         .menuBarExtraStyle(.window)

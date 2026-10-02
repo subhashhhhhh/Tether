@@ -10,3 +10,5 @@ build/
 build_derived/
 *.dmg
 dmg_staging/
+build_release/
+dmg_staging*/

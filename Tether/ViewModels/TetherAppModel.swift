@@ -87,6 +87,10 @@ public final class TetherAppModel {
         }
     }
 
+    public var statusMenuBarImageName: String {
+        connectedDevices.isEmpty ? "MenuBarDisconnected" : "MenuBarConnected"
+    }
+
     public var statusSubtitle: String {
         if !connectedDevices.isEmpty {
             let names = connectedDevices.map(\.name).joined(separator: ", ")

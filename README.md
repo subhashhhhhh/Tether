@@ -1,7 +1,7 @@
 # Tether
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/subhashhhhhh/Tether/main/Tether/Tether/Assets.xcassets/AppIcon.appiconset/icon_512x512.png" width="128" height="128" alt="Tether App Icon" />
+  <img src="https://raw.githubusercontent.com/subhashhhhhh/Tether/main/Tether/Assets.xcassets/AppIcon.appiconset/icon_512x512.png" width="128" height="128" alt="Tether App Icon" />
 </p>
 
 <p align="center">
@@ -89,6 +89,8 @@ The official KDE Connect macOS release relies on Qt 6, KDE Frameworks, OpenSSL, 
 - Configure custom shell scripts and automation commands on your Mac and trigger them on demand from your phone.
 
 ### 🎛️ Segmented Menu Bar Utility (`MenuBarExtra`)
+- Custom dynamic monochrome menu bar mark with connected (interlocking rings) and disconnected (severed link) states.
+- Automatic macOS template tinting across Light and Dark desktop appearances.
 - Discreet menu bar companion with stacked glass cards:
   - App status and one-click window launcher.
   - Device overview with live battery gauge.

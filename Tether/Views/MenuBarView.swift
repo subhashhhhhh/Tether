@@ -68,14 +68,12 @@ public struct MenuBarView: View {
     private var topHeaderSegment: some View {
         GlassCard(cornerRadius: 14, paddingAmount: 10) {
             HStack(alignment: .center, spacing: 10) {
-                ZStack {
-                    Circle()
-                        .fill(Color.accentColor.opacity(0.18))
-                        .frame(width: 32, height: 32)
-                    Image(systemName: "iphone.badge.checkmark")
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundColor(.accentColor)
-                }
+                Image("TetherLogo")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 32, height: 32)
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .shadow(color: .black.opacity(0.15), radius: 2, y: 1)
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Tether")
