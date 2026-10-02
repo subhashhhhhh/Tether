@@ -8,3 +8,5 @@ DerivedData/
 build/
 .build/
 build_derived/
+*.dmg
+dmg_staging/
