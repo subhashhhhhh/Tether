@@ -32,14 +32,14 @@ Whether you want to push files, mirror notifications with inline replies, sync c
 
 ## ⚡️ Lightweight & Blazing Fast: Tether vs. Official KDE Connect macOS
 
-The official KDE Connect macOS release relies on Qt 6, KDE Frameworks, OpenSSL, D-Bus, and hundreds of dynamic shared libraries bundled into the package, resulting in a download size of **~370 MB** and constant background resource overhead.
+The official KDE Connect macOS release relies on Qt 6, KDE Frameworks, OpenSSL, D-Bus, and hundreds of dynamic shared libraries bundled into the package, resulting in a download size of **~90 MB** (expanding to **~370 MB** installed) and constant background resource overhead.
 
 **Tether is written 100% natively in Swift**, utilizing Apple's system frameworks directly.
 
 | Metric | Official KDE Connect (macOS) | Tether | Advantage |
 | :--- | :--- | :--- | :--- |
-| **Download / DMG Size** | ~370 MB | **1.55 MB** | **> 99% smaller** |
-| **Installed App Size** | ~380 MB | **5.0 MB** | **~98% smaller** |
+| **Download / DMG Size** | ~90 MB | **1.55 MB** | **~98% smaller** |
+| **Installed App Size** | ~370 MB | **5.0 MB** | **~98.6% smaller** |
 | **Idle Memory (RAM)** | ~150 – 300 MB | **~15 – 25 MB** | **~90% less RAM** |
 | **Idle CPU Usage** | 1.0 – 5.0% | **0.0%** | **Zero battery drain** |
 | **External Dependencies** | Qt 6, D-Bus, OpenSSL | **Zero** (Pure Apple Frameworks) | **No background bloat** |
