@@ -92,6 +92,27 @@ Whether you want to push files, mirror notifications with inline replies, sync c
 3. Drag **Tether.app** into your **Applications** folder.
 4. Launch **Tether**.
 
+### 🛡️ First-Time Launch (Bypassing macOS Gatekeeper)
+
+Because Tether is an open-source indie application not yet notarized through an Apple Developer account (\$99/year), macOS Gatekeeper will protectively block it on first launch. You can allow it using either of the two standard methods:
+
+#### Method 1: System Settings (Recommended — No Terminal Required)
+1. Try to open **Tether.app**. When the macOS warning appears (*"Tether cannot be opened because Apple cannot check it for malicious software"*), click **Done** or **Cancel**.
+2. Open your Mac's **System Settings** app.
+3. Go to **Privacy & Security** and scroll down to the **Security** section.
+4. You will see: *"'Tether' was blocked from use because it is not from an identified developer"*.
+5. Click **Open Anyway** (authenticate with Touch ID or your Mac password).
+6. Click **Open** on the final confirmation prompt.
+
+> **Tip**: You can also **Right-Click** (or **Control-Click**) `Tether.app` in your `/Applications` folder, select **Open**, and then click **Open** in the dialog.
+
+#### Method 2: Terminal (`xattr`)
+If macOS marks the downloaded binary as quarantined or says the app is damaged, open **Terminal** and run:
+```bash
+xattr -cr /Applications/Tether.app
+```
+This removes the download quarantine attribute. You can now launch Tether normally from Spotlight or Launchpad.
+
 ### Pairing Your Phone
 1. Open the **KDE Connect** app on your Android device.
 2. Under **Available devices**, find your Mac's name and tap **Request Pairing**.
