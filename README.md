@@ -117,7 +117,7 @@ The official KDE Connect macOS release relies on Qt 6, KDE Frameworks, OpenSSL, 
 
 ## 📥 Installation
 
-1. Download the latest **`Tether-1.0.dmg`** from the [GitHub Releases](https://github.com/subhashhhhhh/Tether/releases) page.
+1. Download the latest **`Tether-1.2.dmg`** from the [GitHub Releases](https://github.com/subhashhhhhh/Tether/releases) page.
 2. Open the downloaded `.dmg` file.
 3. Drag **Tether.app** into your **Applications** folder.
 4. Launch **Tether**.

@@ -73,7 +73,7 @@ public final class TetherAppModel {
     }
 
     public var selectedDevice: DeviceViewModel? {
-        guard let id = selectedDeviceId else { return connectedDevices.first }
+        guard let id = selectedDeviceId else { return connectedDevices.first ?? availableDevices.first ?? offlineDevices.first }
         return allDevices.first { $0.id == id }
     }
 
@@ -281,7 +281,7 @@ public final class TetherAppModel {
         updateDevicePluginStates()
 
         if selectedDeviceId == nil || !allDevices.contains(where: { $0.id == selectedDeviceId }) {
-            selectedDeviceId = connected.first?.id ?? offline.first?.id
+            selectedDeviceId = connected.first?.id ?? available.first?.id ?? offline.first?.id
         }
     }
 
@@ -378,6 +378,11 @@ public final class TetherAppModel {
 
     public func refreshDiscovery() {
         TetherService.shared.refreshDiscovery()
+        checkNotificationStatus()
+    }
+
+    public func addManualPeer(ip: String) {
+        TetherService.shared.addManualPeer(ip: ip)
         checkNotificationStatus()
     }
 

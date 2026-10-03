@@ -166,6 +166,9 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, TCPLis
             if let old = self.connectedDevices[id], old !== connection {
                 TetherLog("[TetherService] Seamlessly replacing previous connection to \(id) with new active connection.")
                 self.connectedDevices[id] = connection
+                if let pairReq = self.incomingPairRequest, pairReq.info.deviceId == id {
+                    self.incomingPairRequest = (connection: connection, info: pairReq.info)
+                }
                 if connection.pairState == .paired {
                     for plugin in self.plugins {
                         plugin.onConnected(connection: connection)
@@ -278,10 +281,10 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, TCPLis
                     plugin.onConnected(connection: connection)
                 }
             } else if state == .notPaired {
-                if self.incomingPairRequest?.info.deviceId == info.deviceId {
+                if let req = self.incomingPairRequest, req.connection === connection {
                     self.incomingPairRequest = nil
+                    self.dismissPairingRequestNotification(deviceId: info.deviceId)
                 }
-                self.dismissPairingRequestNotification(deviceId: info.deviceId)
                 for plugin in self.plugins {
                     plugin.onDisconnected(connection: connection)
                 }
@@ -371,7 +374,13 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, TCPLis
     }
 
     public func refreshDiscovery() {
-        udpDiscovery.broadcastPresence()
+        udpDiscovery.broadcastPresence(sweepSubnet: true)
+    }
+
+    public func addManualPeer(ip: String) {
+        udpDiscovery.addKnownTarget(ip: ip)
+        udpDiscovery.sendDirectPresence(to: ip)
+        udpDiscovery.broadcastPresence(sweepSubnet: false)
     }
 
     public func sendFiles(_ urls: [URL], to deviceId: String) {

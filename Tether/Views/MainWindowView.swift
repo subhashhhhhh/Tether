@@ -39,6 +39,8 @@ public enum PluginSection: String, CaseIterable, Identifiable {
 
 public struct MainWindowView: View {
     @Bindable var appModel: TetherAppModel
+    @State private var showingAddIPSheet: Bool = false
+    @State private var manualIPInput: String = ""
 
     public init(appModel: TetherAppModel = TetherAppModel.shared) {
         self.appModel = appModel
@@ -49,23 +51,47 @@ public struct MainWindowView: View {
             sidebarContent
                 .navigationSplitViewColumnWidth(min: 260, ideal: 280, max: 340)
         } detail: {
-            if let device = appModel.selectedDevice {
-                DeviceDetailView(device: device, appModel: appModel)
-                    .id(device.id)
-            } else {
-                emptyDetailState
+            VStack(spacing: 0) {
+                if let pairReq = appModel.incomingPairRequest {
+                    mainWindowPairingBanner(for: pairReq)
+                        .padding(.horizontal, 24)
+                        .padding(.top, 16)
+                        .padding(.bottom, 8)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
+                if let device = appModel.selectedDevice {
+                    DeviceDetailView(device: device, appModel: appModel)
+                        .id(device.id)
+                } else {
+                    emptyDetailState
+                }
             }
+            .animation(.spring(response: 0.35, dampingFraction: 0.8), value: appModel.incomingPairRequest?.id)
         }
         .frame(minWidth: 880, minHeight: 600)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button {
-                    appModel.refreshDiscovery()
-                } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+                HStack(spacing: 8) {
+                    Button {
+                        manualIPInput = ""
+                        showingAddIPSheet = true
+                    } label: {
+                        Label("Add by IP", systemImage: "network")
+                    }
+                    .help("Directly connect to a device by its local IP address")
+
+                    Button {
+                        appModel.refreshDiscovery()
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .help("Search for devices on the local network")
                 }
-                .help("Search for devices on the local network")
             }
+        }
+        .sheet(isPresented: $showingAddIPSheet) {
+            addDeviceByIPSheet
         }
         .onAppear {
             appModel.checkNotificationStatus()
@@ -211,6 +237,110 @@ public struct MainWindowView: View {
             }
         }
         .padding(.top, 8)
+    }
+
+    // MARK: - In-Window Pairing Banner
+    @ViewBuilder
+    private func mainWindowPairingBanner(for request: PairRequestViewModel) -> some View {
+        GlassCard(cornerRadius: 16, paddingAmount: 16) {
+            HStack(spacing: 14) {
+                ZStack {
+                    Circle()
+                        .fill(Color.accentColor.opacity(0.18))
+                        .frame(width: 40, height: 40)
+                    Image(systemName: "person.crop.circle.badge.plus")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(.accentColor)
+                }
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text("Pairing Request")
+                            .font(.system(size: 14, weight: .bold))
+                        Text("•")
+                            .foregroundColor(.secondary)
+                        Text(request.deviceName)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(.primary)
+                    }
+
+                    if let fp = request.fingerprint {
+                        Text("Verification Key: \(fp.prefix(28))...")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text("This device wants to connect to your Mac.")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                Spacer()
+
+                HStack(spacing: 8) {
+                    Button("Reject", role: .destructive) {
+                        withAnimation {
+                            appModel.rejectIncomingPairRequest()
+                        }
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.regular)
+
+                    Button("Accept Pairing") {
+                        withAnimation {
+                            appModel.acceptIncomingPairRequest()
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.regular)
+                }
+            }
+        }
+    }
+
+    // MARK: - Add Device By IP Sheet
+    private var addDeviceByIPSheet: some View {
+        VStack(spacing: 16) {
+            HStack(spacing: 10) {
+                Image(systemName: "network")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundColor(.accentColor)
+                Text("Connect by IP Address")
+                    .font(.headline)
+                Spacer()
+            }
+
+            Text("Enter your phone or tablet's local Wi-Fi IP address (e.g. 192.168.1.45) to connect directly if your router filters discovery broadcasts.")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.leading)
+
+            TextField("e.g. 192.168.1.45", text: $manualIPInput)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.body, design: .monospaced))
+
+            HStack {
+                Button("Cancel") {
+                    showingAddIPSheet = false
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Spacer()
+
+                Button("Connect") {
+                    let ip = manualIPInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !ip.isEmpty {
+                        appModel.addManualPeer(ip: ip)
+                    }
+                    showingAddIPSheet = false
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+                .disabled(manualIPInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 420)
     }
 
     // MARK: - Available Device Card
