@@ -414,8 +414,11 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
         }
 
         if response.actionIdentifier == "TETHER_PAIR_ACCEPT_ACTION" {
+            let info = response.notification.request.content.userInfo
+            let deviceId = info["deviceId"] as? String ?? ""
+            let fingerprint = info["fingerprint"] as? String
             DispatchQueue.main.async {
-                TetherService.shared.acceptIncomingPairRequest()
+                TetherService.shared.acceptIncomingPairRequest(deviceId: deviceId, fingerprint: fingerprint)
             }
             completionHandler()
             return

@@ -96,7 +96,7 @@ public struct MainWindowView: View {
         .sheet(item: pairRequestBinding) { request in
             PairRequestSheet(
                 request: request,
-                onAccept: { appModel.acceptIncomingPairRequest() },
+                onAccept: { appModel.acceptIncomingPairRequest(request) },
                 onDecline: { appModel.rejectIncomingPairRequest() }
             )
         }

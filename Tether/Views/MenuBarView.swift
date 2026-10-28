@@ -241,7 +241,7 @@ public struct MenuBarView: View {
                         Text("Decline").frame(maxWidth: .infinity)
                     }
                     Button {
-                        appModel.acceptIncomingPairRequest()
+                        appModel.acceptIncomingPairRequest(request)
                     } label: {
                         Text("Pair").frame(maxWidth: .infinity)
                     }
