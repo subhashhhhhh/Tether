@@ -38,6 +38,11 @@ nonisolated final class SSHSocket: @unchecked Sendable {
         tcp.keepaliveInterval = 5
         tcp.keepaliveCount = 3
         tcp.connectionTimeout = 15
+        // A phone that vanishes without closing the connection (out of range,
+        // asleep) leaves a request waiting forever: keepalive only probes idle
+        // connections. Give up on unanswered data after 8 s instead, before
+        // macOS decides the drive isn't responding and offers "Disconnect All".
+        tcp.connectionDropTime = 8
         connection = NWConnection(
             host: NWEndpoint.Host(host),
             port: NWEndpoint.Port(rawValue: port) ?? 22,
