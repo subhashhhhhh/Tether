@@ -83,7 +83,7 @@ public struct MenuBarView: View {
                     .allowsHitTesting(false)
             }
         }
-        // Just the routine announcement: a full sweep makes a connected phone reconnect.
+        // Just the routine announcement: a thorough one makes a connected phone reconnect.
         .onAppear { appModel.refreshDiscovery(thorough: false) }
     }
 

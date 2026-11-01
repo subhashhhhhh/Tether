@@ -34,6 +34,8 @@ public final class UDPDiscoveryService: @unchecked Sendable {
     private static let hostOwnersKey = "tether_host_owners"
     private var lastLoggedBroadcastTargets = Set<String>()
     private var hasLoggedOutboundPacket = false
+    /// Bumped by each new sweep, so an older one still pausing stops.
+    private var sweepGeneration = 0
 
     public init() {
         hostOwners = UserDefaults.standard.dictionary(forKey: Self.hostOwnersKey) as? [String: String] ?? [:]
@@ -112,13 +114,10 @@ public final class UDPDiscoveryService: @unchecked Sendable {
         broadcastTimer?.cancel()
         broadcastTimer = nil
 
+        // The cancel handler closes the fd; closing it here too could hit a reused number.
         readSource?.cancel()
         readSource = nil
-
-        if socketFD >= 0 {
-            close(socketFD)
-            socketFD = -1
-        }
+        socketFD = -1
     }
 
     private func setupSocket(port: UInt16) {
@@ -127,6 +126,11 @@ public final class UDPDiscoveryService: @unchecked Sendable {
             TetherLog("[UDPDiscovery] Failed to create UDP socket: \(errno)")
             return
         }
+
+        // Behind a socket content filter a blocking send can sleep forever, and this
+        // queue also receives, so sends must never block.
+        let fileFlags = fcntl(fd, F_GETFL)
+        _ = fcntl(fd, F_SETFL, fileFlags | O_NONBLOCK)
 
         var reuse: Int32 = 1
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
@@ -217,8 +221,9 @@ public final class UDPDiscoveryService: @unchecked Sendable {
     /// Announces this Mac. `routine` is the periodic background announcement:
     /// it skips devices that are already connected, because KDE Connect on
     /// Android answers every announcement by opening a fresh connection, which
-    /// would otherwise churn a healthy one every cycle.
-    public func broadcastPresence(tcpPort: Int? = nil, sweepSubnet: Bool = false, routine: Bool = false) {
+    /// would otherwise churn a healthy one every cycle. `sweepSubnet` also sends
+    /// to every address on the local subnets; it's only for explicit requests.
+    public func broadcastPresence(tcpPort: Int? = nil, routine: Bool = false, sweepSubnet: Bool = false) {
         let packet = DeviceIdentity.shared.toDeviceInfo(tcpPort: tcpPort).toUdpDiscoveryPacket()
         guard let data = try? packet.serialize() else { return }
 
@@ -229,33 +234,35 @@ public final class UDPDiscoveryService: @unchecked Sendable {
         }
 
         queue.async {
-            self.sendBroadcastData(data, sweepSubnet: sweepSubnet, routine: routine)
+            let sent = self.sendBroadcastData(data, routine: routine)
+            if sweepSubnet {
+                self.startSweep(data, skipping: Set(sent))
+            }
         }
     }
 
     private var lastDirectPresenceSent: [String: Date] = [:]
 
     public func sendDirectPresence(to host: String, tcpPort: Int? = nil) {
-        let last = lastDirectPresenceSent[host] ?? .distantPast
-        guard Date().timeIntervalSince(last) > 10 else { return }
-        lastDirectPresenceSent[host] = Date()
-
         let packet = DeviceIdentity.shared.toDeviceInfo(tcpPort: tcpPort).toUdpDiscoveryPacket()
         guard let data = try? packet.serialize() else { return }
 
         queue.async {
+            let last = self.lastDirectPresenceSent[host] ?? .distantPast
+            guard Date().timeIntervalSince(last) > 10 else { return }
+            self.lastDirectPresenceSent[host] = Date()
             self.sendDatagram(data: data, toIP: host)
         }
     }
 
     private func startBroadcasting() {
-        // Initial broadcast with active subnet sweep to immediately locate devices
-        broadcastPresence(sweepSubnet: true)
+        // Initial announcement to every candidate, connected phones included
+        broadcastPresence()
 
         let timer = DispatchSource.makeTimerSource(queue: queue)
         timer.schedule(deadline: .now() + .seconds(15), repeating: .seconds(45))
         timer.setEventHandler { [weak self] in
-            self?.broadcastPresence(sweepSubnet: false, routine: true)
+            self?.broadcastPresence(routine: true)
         }
         timer.resume()
         self.broadcastTimer = timer
@@ -288,7 +295,15 @@ public final class UDPDiscoveryService: @unchecked Sendable {
             }
             if sin.sin_family == sa_family_t(AF_INET) {
                 let ipStr = String(cString: inet_ntoa(sin.sin_addr))
-                if !ipStr.hasSuffix(".255") && !ipStr.hasSuffix(".0") && !ipStr.hasPrefix("127.") && !ipStr.hasPrefix("224.") {
+                // Skip incomplete entries: nothing answered ARP there.
+                let sinLen = max(Int(sin.sin_len), MemoryLayout<UInt32>.size)
+                let sdlOffset = sinOffset + ((sinLen + 3) & ~3)
+                let resolved = sdlOffset + 7 <= offset + rtmMsgLen
+                    && buffer[sdlOffset + 1] == UInt8(AF_LINK)
+                    && buffer[sdlOffset + 6] > 0
+                let isMulticast = UInt32(bigEndian: sin.sin_addr.s_addr) >> 28 == 0xE
+                let isBroadcast = rtm.rtm_flags & RTF_BROADCAST != 0
+                if resolved && !isMulticast && !isBroadcast && !ipStr.hasPrefix("127.") {
                     if !ips.contains(ipStr) {
                         ips.append(ipStr)
                     }
@@ -297,44 +312,6 @@ public final class UDPDiscoveryService: @unchecked Sendable {
             offset += rtmMsgLen
         }
         return ips
-    }
-
-    // MARK: - Subnet Sweep Targets (/24 Networks)
-    private func getLocalSubnetSweepTargets() -> [String] {
-        var sweepIPs: [String] = []
-        var ifaddr: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else { return [] }
-        defer { freeifaddrs(ifaddr) }
-
-        for ptr in sequence(first: firstAddr, next: { $0.pointee.ifa_next }) {
-            let flags = Int32(ptr.pointee.ifa_flags)
-            let isUp = (flags & IFF_UP) != 0
-            let isRunning = (flags & IFF_RUNNING) != 0
-            let isLoopback = (flags & IFF_LOOPBACK) != 0
-
-            guard isUp && isRunning && !isLoopback else { continue }
-            guard let addr = ptr.pointee.ifa_addr, addr.pointee.sa_family == sa_family_t(AF_INET),
-                  let netmask = ptr.pointee.ifa_netmask, netmask.pointee.sa_family == sa_family_t(AF_INET) else { continue }
-
-            let sinAddr = addr.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee.sin_addr }
-            let myIP = String(cString: inet_ntoa(sinAddr))
-
-            let sinMask = netmask.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee.sin_addr }
-            // Only sweep standard /24 subnets (255.255.255.0 = 0x00FFFFFF in network byte order)
-            if sinMask.s_addr == in_addr_t(0x00FFFFFF) {
-                let parts = myIP.split(separator: ".")
-                if parts.count == 4 {
-                    let prefix = "\(parts[0]).\(parts[1]).\(parts[2])."
-                    let myHostNum = Int(parts[3]) ?? 0
-                    for host in 1...254 {
-                        if host != myHostNum {
-                            sweepIPs.append("\(prefix)\(host)")
-                        }
-                    }
-                }
-            }
-        }
-        return sweepIPs
     }
 
     private func getBroadcastAddresses() -> [String] {
@@ -368,74 +345,134 @@ public final class UDPDiscoveryService: @unchecked Sendable {
         return addresses
     }
 
-    private func sendBroadcastData(_ data: Data, sweepSubnet: Bool = false, routine: Bool = false) {
-        guard socketFD >= 0 else { return }
-        let connected = delegate?.connectedHosts() ?? []
-        // A broadcast reaches connected phones too, so a routine announcement
-        // only broadcasts while nothing is connected; otherwise it unicasts to
-        // the remaining candidates below.
-        var targets = routine && !connected.isEmpty ? [] : getBroadcastAddresses()
+    // MARK: - Subnet Sweep
 
-        // 1. Add active ARP neighbors directly from the kernel routing cache
-        for ip in getKernelARPAddresses() {
-            if !targets.contains(ip) {
+    private func startSweep(_ data: Data, skipping sent: Set<String>) {
+        let targets = getLocalSubnetSweepTargets().filter { !sent.contains($0) }
+        guard !targets.isEmpty else { return }
+        sweepGeneration += 1
+        TetherLog("[UDPDiscovery] Sweeping \(targets.count) local subnet addresses")
+        continueSweep(data, targets: targets, from: 0, generation: sweepGeneration, started: Date(), pauses: 0)
+    }
+
+    /// Behind a content filter only a few dozen sends fit in the buffer while the
+    /// filter decides, so a full buffer pauses the sweep briefly instead of ending it.
+    private func continueSweep(_ data: Data, targets: [String], from start: Int, generation: Int, started: Date, pauses: Int) {
+        guard generation == sweepGeneration else { return }
+        var index = start
+        while index < targets.count, sendDatagram(data: data, toIP: targets[index], logFull: false) {
+            index += 1
+        }
+        let elapsed = Date().timeIntervalSince(started)
+        guard index < targets.count, elapsed < 5 else {
+            TetherLog("[UDPDiscovery] Sweep sent \(index) of \(targets.count) in \(String(format: "%.1f", elapsed)) s, pausing \(pauses) times for a full send buffer")
+            return
+        }
+        queue.asyncAfter(deadline: .now() + .milliseconds(50)) {
+            self.continueSweep(data, targets: targets, from: index, generation: generation, started: started, pauses: pauses + 1)
+        }
+    }
+
+    /// Every host address on each local broadcast subnet up to /22, except our own.
+    private func getLocalSubnetSweepTargets() -> [String] {
+        var targets: [String] = []
+        var seen = Set<UInt32>()
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0, let firstAddr = ifaddr else { return [] }
+        defer { freeifaddrs(ifaddr) }
+
+        for ptr in sequence(first: firstAddr, next: { $0.pointee.ifa_next }) {
+            let flags = Int32(ptr.pointee.ifa_flags)
+            guard (flags & IFF_UP) != 0, (flags & IFF_RUNNING) != 0,
+                  (flags & IFF_LOOPBACK) == 0, (flags & IFF_BROADCAST) != 0,
+                  let addr = ptr.pointee.ifa_addr, addr.pointee.sa_family == sa_family_t(AF_INET),
+                  let netmask = ptr.pointee.ifa_netmask else { continue }
+
+            let own = UInt32(bigEndian: addr.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee.sin_addr.s_addr })
+            let mask = UInt32(bigEndian: netmask.withMemoryRebound(to: sockaddr_in.self, capacity: 1) { $0.pointee.sin_addr.s_addr })
+            let hostBits = ~mask
+            guard hostBits >= 3, hostBits <= 1023 else { continue }
+
+            let network = own & mask
+            for host in 1..<hostBits {
+                let address = network | host
+                guard address != own, seen.insert(address).inserted else { continue }
+                targets.append("\(address >> 24).\(address >> 16 & 255).\(address >> 8 & 255).\(address & 255)")
+            }
+        }
+        return targets
+    }
+
+    @discardableResult
+    private func sendBroadcastData(_ data: Data, routine: Bool = false) -> [String] {
+        guard socketFD >= 0 else { return [] }
+        let connected = delegate?.connectedHosts() ?? []
+
+        // 1. Known past & manual target IPs and tailnet phones, first in case the round is cut short.
+        var targets = Array(knownTargetIPs.union(tailscaleTargetIPs))
+
+        // 2. A broadcast reaches connected phones too, so a routine announcement
+        // only broadcasts while nothing is connected.
+        if !routine || connected.isEmpty {
+            for ip in getBroadcastAddresses() where !targets.contains(ip) {
                 targets.append(ip)
             }
         }
 
-        // 2. Add known past & manual target IPs, and phones on the user's tailnet
-        for ip in knownTargetIPs.union(tailscaleTargetIPs) {
-            if !targets.contains(ip) {
-                targets.append(ip)
-            }
+        // 3. Active ARP neighbors from the kernel routing cache
+        for ip in getKernelARPAddresses() where !targets.contains(ip) {
+            targets.append(ip)
         }
 
         if routine {
             targets.removeAll { belongsToConnectedDevice($0, connectedHosts: connected) }
         }
-        guard !targets.isEmpty || sweepSubnet else { return }
+        guard !targets.isEmpty else { return [] }
 
         if Set(targets) != lastLoggedBroadcastTargets {
             lastLoggedBroadcastTargets = Set(targets)
             TetherLog("[UDPDiscovery] Broadcasting discovery to \(targets.joined(separator: ", "))")
         }
 
+        var sentCount = 0
         for ip in targets {
-            sendDatagram(data: data, toIP: ip)
+            guard sendDatagram(data: data, toIP: ip) else { break }
+            sentCount += 1
         }
-
-        // 3. If explicit sweep requested (on start / user tap Refresh), blast unicast discovery across /24 subnet
-        if sweepSubnet {
-            let sweepTargets = getLocalSubnetSweepTargets()
-            if !sweepTargets.isEmpty {
-                TetherLog("[UDPDiscovery] Sweeping \(sweepTargets.count) local subnet hosts for active KDE Connect instances...")
-                for ip in sweepTargets {
-                    sendDatagram(data: data, toIP: ip)
-                }
-            }
-        }
+        return Array(targets.prefix(sentCount))
     }
 
-    private func sendDatagram(data: Data, toIP ip: String) {
-        guard socketFD >= 0 else { return }
+    /// Returns false when the send buffer is full, so a round can stop early.
+    @discardableResult
+    private func sendDatagram(data: Data, toIP ip: String, logFull: Bool = true) -> Bool {
+        guard socketFD >= 0 else { return false }
         var targetAddr = sockaddr_in()
         targetAddr.sin_family = sa_family_t(AF_INET)
         targetAddr.sin_port = in_port_t(UDPDiscoveryService.defaultPort).bigEndian
 
         if inet_pton(AF_INET, ip, &targetAddr.sin_addr) <= 0 {
-            return
+            return true
         }
 
-        data.withUnsafeBytes { rawBuffer in
-            guard let baseAddress = rawBuffer.baseAddress else { return }
+        let (sent, err) = data.withUnsafeBytes { rawBuffer -> (Int, Int32) in
+            guard let baseAddress = rawBuffer.baseAddress else { return (0, 0) }
             let sent = withUnsafePointer(to: &targetAddr) {
                 $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
                     sendto(self.socketFD, baseAddress, data.count, 0, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
                 }
             }
-            if sent < 0 && errno != EHOSTUNREACH && errno != ENETUNREACH && errno != EHOSTDOWN {
-                TetherLog("[UDPDiscovery] Failed to send discovery to \(ip): errno \(errno)")
-            }
+            return (sent, errno)
         }
+        guard sent < 0 else { return true }
+        if err == EAGAIN || err == ENOBUFS {
+            if logFull {
+                TetherLog("[UDPDiscovery] Send buffer full at \(ip) (errno \(err)); skipping the rest of this round")
+            }
+            return false
+        }
+        if err != EHOSTUNREACH && err != ENETUNREACH && err != EHOSTDOWN {
+            TetherLog("[UDPDiscovery] Failed to send discovery to \(ip): errno \(err)")
+        }
+        return true
     }
 }
