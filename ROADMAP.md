@@ -92,4 +92,5 @@ These would need features the KDE Connect Android app doesn't have, or that macO
 - **Seek in a Safari video from the phone.** Safari ignores seeking from other apps; play, pause and skip work.
 - **Answer or decline calls from the Mac.** KDE Connect for Android can only silence the ringer, and call audio would stay on the phone anyway.
 - **Android app icons in notifications.** The phone sends a notification's picture but not the app's icon, and macOS always shows Tether's icon in the corner of a banner. Fetching icons online is off the table, since Tether doesn't use the internet.
+- **Send the phone's clipboard automatically.** Since Android 10, apps in the background can't read the clipboard, so KDE Connect only sends it when you tap its "Send clipboard" button or tile. The Mac's clipboard still reaches the phone automatically.
 - **Clipboard images and files.** KDE Connect's clipboard sync is text only. Use Share or drag and drop instead.
