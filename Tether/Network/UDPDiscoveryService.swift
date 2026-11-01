@@ -243,13 +243,13 @@ public final class UDPDiscoveryService: @unchecked Sendable {
 
     private var lastDirectPresenceSent: [String: Date] = [:]
 
-    public func sendDirectPresence(to host: String, tcpPort: Int? = nil) {
+    public func sendDirectPresence(to host: String, tcpPort: Int? = nil, throttled: Bool = true) {
         let packet = DeviceIdentity.shared.toDeviceInfo(tcpPort: tcpPort).toUdpDiscoveryPacket()
         guard let data = try? packet.serialize() else { return }
 
         queue.async {
             let last = self.lastDirectPresenceSent[host] ?? .distantPast
-            guard Date().timeIntervalSince(last) > 10 else { return }
+            guard !throttled || Date().timeIntervalSince(last) > 10 else { return }
             self.lastDirectPresenceSent[host] = Date()
             self.sendDatagram(data: data, toIP: host)
         }

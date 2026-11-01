@@ -74,11 +74,21 @@
 			);
 			target = 38226D8D307CF7BE00449642 /* TetherShare */;
 		};
+		38E1A7C2309F00A100D15C0D /* Exceptions for "Tether" folder in "Tether" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = 380DA5A5306B8D3000598FE4 /* Tether */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		380DA5A8306B8D3000598FE4 /* Tether */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				38E1A7C2309F00A100D15C0D /* Exceptions for "Tether" folder in "Tether" target */,
+			);
 			path = Tether;
 			sourceTree = "<group>";
 		};
@@ -490,6 +500,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Tether/Info.plist;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2026 Subhash. Licensed under GPL-2.0.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Tether discovers and connects with your Android devices over your local network.";
@@ -535,6 +546,7 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Tether/Info.plist;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2026 Subhash. Licensed under GPL-2.0.";
 				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Tether discovers and connects with your Android devices over your local network.";

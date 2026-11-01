@@ -64,6 +64,7 @@ public final class SettingsViewModel {
         self.deviceName = trimmed
         DeviceIdentity.shared.deviceName = trimmed
         UserDefaults.standard.set(trimmed, forKey: "tether_device_name")
+        TetherService.shared.refreshAdvertisement()
     }
 
     public func unpair(deviceId: String) {

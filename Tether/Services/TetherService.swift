@@ -9,7 +9,7 @@ import SwiftUI
 import UserNotifications
 
 @MainActor
-public final class TetherService: ObservableObject, UDPDiscoveryDelegate, TCPListenerDelegate, DeviceConnectionDelegate {
+public final class TetherService: ObservableObject, UDPDiscoveryDelegate, MDNSDiscoveryDelegate, TCPListenerDelegate, DeviceConnectionDelegate {
     public static let shared = TetherService()
 
     @Published public private(set) var isRunning: Bool = false
@@ -40,6 +40,10 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, TCPLis
     public let sftpPlugin = SftpPlugin()
 
     private let udpDiscovery = UDPDiscoveryService()
+    private let mdnsDiscovery = MDNSDiscovery()
+    private var pairedDevicesObserver: AnyCancellable?
+    private var heardAt: [String: Date] = [:]
+    private var reachOutTasks: [String: Task<Void, Never>] = [:]
     private var tailscaleTimer: DispatchSourceTimer?
     private let tcpListener = TCPListenerService()
     private var discoveredDeviceEndpoints: [String: (host: String, port: Int)] = [:]
@@ -78,6 +82,7 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, TCPLis
             sftpPlugin
         ]
         udpDiscovery.delegate = self
+        mdnsDiscovery.delegate = self
         tcpListener.delegate = self
     }
 
@@ -87,6 +92,10 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, TCPLis
 
         tcpListener.start()
         udpDiscovery.start()
+        mdnsDiscovery.start(advertising: DeviceIdentity.shared.toDeviceInfo(tcpPort: Int(tcpListener.activePort)))
+        pairedDevicesObserver = trustStore.$pairedDevices.sink { [weak self] devices in
+            self?.mdnsDiscovery.setPairedDeviceIds(Set(devices.keys))
+        }
         startTailscaleDiscovery()
         TetherLog("[TetherService] Service started successfully.")
     }
@@ -96,6 +105,12 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, TCPLis
         isRunning = false
 
         udpDiscovery.stop()
+        mdnsDiscovery.stop()
+        pairedDevicesObserver = nil
+        for task in reachOutTasks.values {
+            task.cancel()
+        }
+        reachOutTasks.removeAll()
         tcpListener.stop()
         tailscaleTimer?.cancel()
         tailscaleTimer = nil
@@ -157,6 +172,55 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, TCPLis
                 }
             }
         }
+    }
+
+    // MARK: - mDNS Discovery Delegate
+
+    /// Unpaired devices get one announcement, as KDE Connect desktop does.
+    nonisolated public func didFindDevice(deviceId: String, host: String) {
+        Task { @MainActor in
+            if self.trustStore.isTrusted(deviceId: deviceId) {
+                self.reachOut(to: deviceId, host: host)
+            } else if !self.isDeviceConnected(deviceId: deviceId) {
+                self.udpDiscovery.sendDirectPresence(to: host)
+            }
+        }
+    }
+
+    /// It may be back before we noticed it left; the disconnect path checks `heardAt`.
+    nonisolated public func didHear(deviceId: String) {
+        Task { @MainActor in
+            self.heardAt[deviceId] = Date()
+            guard self.trustStore.isTrusted(deviceId: deviceId), !self.isDeviceConnected(deviceId: deviceId) else { return }
+            TetherLog("[TetherService] Heard \(deviceId) in mDNS traffic; resolving")
+            self.mdnsDiscovery.resolve(deviceId: deviceId)
+        }
+    }
+
+    /// A phone isn't reachable for about a second after rejoining, and macOS can mark
+    /// its address down for 20 s (net.link.ether.inet.host_down_time), hence the schedule.
+    private func reachOut(to deviceId: String, host: String) {
+        let key = "\(deviceId)@\(host)"
+        guard !isDeviceConnected(deviceId: deviceId), reachOutTasks[key] == nil else { return }
+        TetherLog("[TetherService] Reaching out to \(deviceId) at \(host)")
+        udpDiscovery.noteHost(host, belongsTo: deviceId)
+        reachOutTasks[key] = Task {
+            defer { reachOutTasks[key] = nil }
+            var elapsed = 0.0
+            for second in [0, 0.5, 1, 1.5, 2, 5, 10, 21, 30, 45] {
+                try? await Task.sleep(for: .seconds(second - elapsed))
+                elapsed = second
+                guard !Task.isCancelled, !isDeviceConnected(deviceId: deviceId),
+                      !pendingConnections.keys.contains(where: { $0.hasPrefix("in_\(host):") }) else { return }
+                udpDiscovery.sendDirectPresence(to: host, throttled: false)
+            }
+            TetherLog("[TetherService] Sent last attempt to \(deviceId) at \(host) at 45 s")
+        }
+    }
+
+    public func refreshAdvertisement() {
+        guard isRunning else { return }
+        mdnsDiscovery.updateAdvertisement(DeviceIdentity.shared.toDeviceInfo(tcpPort: Int(tcpListener.activePort)))
     }
 
     // MARK: - TCP Listener Delegate
@@ -236,6 +300,10 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, TCPLis
                     self.connectedDevices.removeValue(forKey: id)
                     self.deactivatePlugins(for: connection)
                     TetherLog("[TetherService] Disconnected from \(connection.peerDeviceInfo?.deviceName ?? id)")
+                    // After a short drop the device is often back before its old connection times out.
+                    if let heard = self.heardAt[id], Date().timeIntervalSince(heard) < 5 {
+                        self.mdnsDiscovery.resolve(deviceId: id)
+                    }
                     if let info = connection.peerDeviceInfo, info.deviceType == .phone, connection.pairState == .paired {
                         AwayLock.shared.phoneDisconnected(id, name: info.deviceName)
                     }
@@ -248,11 +316,16 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, TCPLis
             // connection error, and it is what makes pairing work on networks where
             // inbound connections to one of the two devices are blocked.
             if connection.isOutgoing, connection.peerDeviceInfo == nil {
-                let listenPort = self.tcpListener.activePort == 0
-                    ? TCPListenerService.minPort
-                    : self.tcpListener.activePort
-                TetherLog("[TetherService] Outgoing connection to \(connection.host) failed; inviting a reverse connection on port \(listenPort)")
-                self.udpDiscovery.sendDirectPresence(to: connection.host, tcpPort: Int(listenPort))
+                if let deviceId = connection.targetDeviceId {
+                    TetherLog("[TetherService] Outgoing connection to \(connection.host) failed; inviting a reverse connection")
+                    self.reachOut(to: deviceId, host: connection.host)
+                } else {
+                    let listenPort = self.tcpListener.activePort == 0
+                        ? TCPListenerService.minPort
+                        : self.tcpListener.activePort
+                    TetherLog("[TetherService] Outgoing connection to \(connection.host) failed; inviting a reverse connection on port \(listenPort)")
+                    self.udpDiscovery.sendDirectPresence(to: connection.host, tcpPort: Int(listenPort))
+                }
             }
         }
     }
