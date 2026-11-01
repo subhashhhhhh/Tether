@@ -335,8 +335,8 @@ public final class TetherAppModel {
 
     // MARK: - Actions
 
-    public func acceptIncomingPairRequest() {
-        TetherService.shared.acceptIncomingPairRequest()
+    public func acceptIncomingPairRequest(_ request: PairRequestViewModel) {
+        TetherService.shared.acceptIncomingPairRequest(deviceId: request.id, fingerprint: request.fingerprint)
         incomingPairRequest = nil
     }
 

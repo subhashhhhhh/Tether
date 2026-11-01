@@ -385,8 +385,17 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, TCPLis
         }
     }
 
-    public func acceptIncomingPairRequest() {
+    /// Accepts the pending request only if it is still the one the user saw.
+    /// `incomingPairRequest` is a single slot that any peer can overwrite, so
+    /// the caller passes the device ID and certificate fingerprint it showed;
+    /// if another request has taken the slot since, nothing is accepted.
+    public func acceptIncomingPairRequest(deviceId: String, fingerprint: String?) {
         guard let pairReq = incomingPairRequest else { return }
+        guard pairReq.info.deviceId == deviceId,
+              SocketTLS.fingerprintsMatch(pairReq.connection.peerCertificateFingerprint, fingerprint) else {
+            TetherLog("[TetherService] Not accepting: the pending pairing request changed after it was shown")
+            return
+        }
         dismissPairingRequestNotification(deviceId: pairReq.info.deviceId)
         pairReq.connection.acceptPairing()
         incomingPairRequest = nil
@@ -547,7 +556,10 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, TCPLis
         }
         content.sound = .default
         content.categoryIdentifier = "TETHER_PAIR_REQUEST_CATEGORY"
-        content.userInfo = ["deviceId": info.deviceId]
+        content.userInfo = [
+            "deviceId": info.deviceId,
+            "fingerprint": connection.peerCertificateFingerprint ?? ""
+        ]
 
         let request = UNNotificationRequest(
             identifier: "kde_pair_\(info.deviceId)",
