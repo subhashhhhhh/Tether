@@ -193,7 +193,13 @@ final class PhoneFilesController {
         }
         // A phone that disconnected gets its drive back automatically next time.
         ejectedDevices.subtract(connected.subtracting(newConnected))
-        for deviceId in connected.subtracting(newConnected) { disconnectedAt[deviceId] = .now }
+        for deviceId in connected.subtracting(newConnected) {
+            disconnectedAt[deviceId] = .now
+            // The drive stays mounted for a short disconnect, but its file session
+            // is likely dead: close it so Finder gets an error straight away rather
+            // than waiting on the phone. It reopens when the phone is back.
+            if let router = routers[deviceId] { Task { await router.close() } }
+        }
         for deviceId in newConnected { disconnectedAt[deviceId] = nil }
         paired = newPaired
         connected = newConnected
