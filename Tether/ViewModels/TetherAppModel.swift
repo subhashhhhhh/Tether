@@ -336,8 +336,9 @@ public final class TetherAppModel {
     // MARK: - Actions
 
     public func acceptIncomingPairRequest(_ request: PairRequestViewModel) {
+        // The service clears its request when it accepts and the change reaches
+        // us; clearing here too would hide a newer request it refused to accept.
         TetherService.shared.acceptIncomingPairRequest(deviceId: request.id, fingerprint: request.fingerprint)
-        incomingPairRequest = nil
     }
 
     public func rejectIncomingPairRequest() {
