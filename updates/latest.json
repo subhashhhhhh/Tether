@@ -1,17 +1,17 @@
 {
-  "version": "1.9",
-  "tag": "v1.9",
-  "notes": "### 💬 Texts send again\n- **Fixed: texts sent from the Mac never arrived.** Tether was sending them without a recipient, so the phone quietly dropped them. Thanks to everyone on Reddit who reported it.\n- **New Message** now opens right in the conversation pane, like Messages: type a name or number, pick a contact with the arrow keys, and write. If you've texted them before, the conversation's history is right there.\n- **Dual-SIM phones:** a SIM menu next to the send button picks which SIM a text goes out on. Replies use the SIM the conversation is already on. Name your SIMs after their carriers from the same menu.\n\n### 📞 A call card instead of a banner\n- Incoming calls show in a card at the top right with the caller's photo and name, and a **Silence** button that mutes the phone's ringer.\n- Answer on the phone and it shrinks to a small pill with a call timer, and goes away when you hang up.\n- Prefer the old banner? Turn it off in **Settings › General**.\n- KDE Connect can't answer or decline calls from a computer, so the card doesn't pretend to.\n\n### 🖼️ Pictures in notifications, by @ronal2s (#2)\n- Notifications show the picture your phone sends with them, such as the sender's photo, in the banner and in the Notifications tab.\n- With WhatsApp for Mac running, WhatsApp messages no longer alert twice. Clicking a WhatsApp notification opens WhatsApp for Mac.\n- Apps without a picture of their own, like Tailscale or Truecaller, show their icon as a tidy symbol instead of a stretched white shape.\n- About app icons: banners always show Tether's icon in the corner. macOS doesn't let apps change it, and your phone doesn't send the app's own icon.\n\nThank you @ronal2s for Tether's first outside contribution!\n\n### 🔋 The Mac's battery on your phone\n- KDE Connect's device list on the phone now shows your MacBook's charge, and whether it's plugged in.\n\n### 🔧 Fixes\n- Calls now end on the Mac when they end on the phone. Before, \"Call in progress\" stayed, and music paused for a call never came back.\n- Video thumbnails from Safari now show on the phone in KDE Connect's media controls. Album art is sent sharper, up to 1024 px.",
+  "version": "1.9.1",
+  "tag": "v1.9.1",
+  "notes": "### 📡 Finds your phone faster\n- Tether now also finds your phone through Bonjour, which works on office and campus Wi-Fi that blocks KDE Connect's usual broadcasts. When your phone drops off Wi-Fi and comes back, it reconnects on its own within seconds instead of waiting up to 45. By @zzjjaayy (#7)\n- On Macs with corporate security software, discovery could freeze at launch, so a phone that dropped off Wi-Fi was never found again until Tether restarted. Fixed by @zzjjaayy (#6)\n- macOS may ask once whether Tether can find devices on your local network. Allow it so Bonjour discovery works.\n\n### 📁 Phone drive\n- Fixed \"server not responding\" prompts asking you to disconnect when your phone went out of range or to sleep while its drive was open.\n\n### 🔒 Pairing\n- Accepting a pairing request now only ever pairs the device you were shown, even if another request arrives while the prompt is open. By @youp211 (#9)\n\nThank you @zzjjaayy and @youp211!",
   "archives": {
     "AppleSilicon": {
-      "name": "Tether-1.9-AppleSilicon.zip",
-      "size": 2420100,
-      "sha256": "3dabe2af61704b11f71a4ff1e26026fac871a8725ca2c6ea0888c710a7cadd9b"
+      "name": "Tether-1.9.1-AppleSilicon.zip",
+      "size": 2450029,
+      "sha256": "37bc420be0c78b9f1cd4c087797eea9a1ef98b9c379280e45e967909ef90dac8"
     },
     "Intel": {
-      "name": "Tether-1.9-Intel.zip",
-      "size": 2557211,
-      "sha256": "62a34943b3cbea7f917466ec941064ea916b6785b1938904f38e92a1fe854296"
+      "name": "Tether-1.9.1-Intel.zip",
+      "size": 2588667,
+      "sha256": "c7e26f2804ccd9ad9f84befc774df3f63fcdd4e8f3366a895a4f9c61b3b3cf2c"
     }
   }
 }
