@@ -8,10 +8,10 @@ Planned features have no dates. Ideas and bug reports are welcome in [Issues](ht
 
 ## Available now
 
-As of Tether 1.9.
+As of Tether 1.9.1.
 
 ### Connecting
-- [x] Finds your phone automatically on the same Wi-Fi
+- [x] Finds your phone automatically on the same Wi-Fi, including networks that block broadcasts (through Bonjour), and reconnects within seconds when it rejoins
 - [x] Finds your phone over [Tailscale](https://tailscale.com), so it works away from home
 - [x] Connect by IP address or Tailscale name
 - [x] Pairing with certificate pinning, so only your phone can connect as your phone
