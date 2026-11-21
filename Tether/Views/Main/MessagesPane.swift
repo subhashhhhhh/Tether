@@ -44,10 +44,9 @@ struct MessagesPane: View {
             }
             .task { device.refreshMessages() }
         } else {
-            HStack(spacing: 0) {
+            HSplitView {
                 threadList
-                    .frame(width: 280)
-                Divider()
+                    .frame(minWidth: 240, idealWidth: 290, maxWidth: 340)
                 Group {
                     if isComposing && selectedThreadId == Self.draftTag {
                         NewConversationView(device: device, onSent: { number in
@@ -61,7 +60,9 @@ struct MessagesPane: View {
                         ContentUnavailableView("No Conversation Selected", systemImage: "bubble.left.and.bubble.right")
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
+                // The conversation takes the room; the list keeps its width.
+                .layoutPriority(1)
             }
             .onAppear {
                 if selectedThreadId == nil { selectedThreadId = device.smsThreads.first?.id }
@@ -75,7 +76,6 @@ struct MessagesPane: View {
             }
             .onChange(of: device.smsThreads) { selectPendingThread() }
             .onChange(of: device.composeRequests) { startComposing() }
-            .searchable(text: $searchText, placement: .toolbar, prompt: "Search")
         }
     }
 
@@ -103,6 +103,13 @@ struct MessagesPane: View {
     private var threadList: some View {
         VStack(spacing: 0) {
             List(selection: $selectedThreadId) {
+                // Room for the search pill, which the rows then scroll under.
+                Color.clear
+                    .frame(height: 38)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets())
+                    .selectionDisabled()
+                    .accessibilityHidden(true)
                 if isComposing {
                     HStack(spacing: 10) {
                         Image(systemName: "square.and.pencil")
@@ -120,10 +127,21 @@ struct MessagesPane: View {
                 ForEach(filteredThreads) { thread in
                     ThreadRow(thread: thread, device: device)
                         .tag(thread.id)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 5, bottom: 0, trailing: 10))
                 }
             }
             .listStyle(.inset)
             .scrollContentBackground(.hidden)
+            .noTopScrollEdge()
+            // The search pill floats over the list, as in Messages: nothing
+            // behind it, and rows pass under it as they scroll.
+            // Overlaid, not inset: the system draws the toolbar's band and its
+            // line over any top inset, and the pill should have only rows
+            // behind it. The list's first row is the room it starts in.
+            .overlay(alignment: .top) {
+                SearchPill(text: $searchText)
+                    .padding(.horizontal, 10)
+            }
         }
     }
 }
@@ -131,10 +149,23 @@ struct MessagesPane: View {
 private struct ThreadRow: View {
     let thread: SMSConversation
     let device: DeviceViewModel
+    /// Increased while the row is selected, when a tinted dot would vanish
+    /// into the selection colour.
+    @Environment(\.backgroundProminence) private var backgroundProminence
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            InitialsAvatar(name: device.title(for: thread), size: 36, photo: device.photo(for: thread))
+            HStack(alignment: .center, spacing: 5) {
+                // Inside the row, as in Messages, so it's part of the selection.
+                Circle()
+                    .fill(backgroundProminence == .increased ? AnyShapeStyle(.white) : AnyShapeStyle(.tint))
+                    .frame(width: 7, height: 7)
+                    .opacity(thread.unreadCount > 0 ? 1 : 0)
+                    .accessibilityLabel("Unread")
+                    .accessibilityHidden(thread.unreadCount == 0)
+                InitialsAvatar(name: device.title(for: thread), size: 36, photo: device.photo(for: thread),
+                               isSenderID: device.isSenderID(thread))
+            }
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline) {
@@ -146,20 +177,10 @@ private struct ThreadRow: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                HStack(alignment: .top) {
-                    Text(thread.snippet)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                    Spacer(minLength: 4)
-                    if thread.unreadCount > 0 {
-                        Circle()
-                            .fill(.tint)
-                            .frame(width: 8, height: 8)
-                            .padding(.top, 4)
-                            .accessibilityLabel("Unread")
-                    }
-                }
+                Text(thread.snippet)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
             }
         }
         .padding(.vertical, 4)
@@ -173,19 +194,16 @@ private struct ConversationView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(spacing: 4) {
-                InitialsAvatar(name: device.title(for: thread), size: 36, photo: device.photo(for: thread))
-                Text(device.title(for: thread))
-                    .font(.callout.weight(.medium))
-                    .lineLimit(1)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-
-            Divider()
-
+            // The header floats at the top of the window, level with the
+            // toolbar's buttons as in Messages, and messages scroll under it.
             MessageList(thread: thread, device: device)
+                .floatingHeader(height: 80) {
+                    ConversationHeader(thread: thread, device: device)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 60)
+                        .padding(.top, 8)
+                }
+                .ignoresSafeArea(.container, edges: .top)
 
             MessageComposer(device: device, thread: thread, isFocused: $isComposerFocused) { text, sim in
                 guard !thread.addresses.isEmpty else { return }
@@ -195,54 +213,136 @@ private struct ConversationView: View {
     }
 }
 
-/// A conversation's messages by day, newest at the bottom.
+/// Who the conversation is with, as in Messages: the avatar resting on the
+/// top of a glass capsule with the name. Clicking it shows the number.
+private struct ConversationHeader: View {
+    let thread: SMSConversation
+    let device: DeviceViewModel
+    @State private var isShowingDetails = false
+
+    private var title: String { device.title(for: thread) }
+
+    var body: some View {
+        Button { isShowingDetails = true } label: {
+            // Negative spacing: the avatar just rests on the capsule's top edge.
+            VStack(spacing: -7) {
+                InitialsAvatar(name: title, size: 40, photo: device.photo(for: thread),
+                               isSenderID: device.isSenderID(thread))
+                    .zIndex(1)
+                HStack(spacing: 5) {
+                    Text(title)
+                        .fontWeight(.semibold)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                        .accessibilityHidden(true)
+                }
+                .padding(.horizontal, 14)
+                .padding(.top, 9)
+                .padding(.bottom, 6)
+                .frame(maxWidth: 300)
+                .fixedSize()
+                .glassCapsule(interactive: true)
+            }
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .help("Show details")
+        .accessibilityLabel("\(title), details")
+        .popover(isPresented: $isShowingDetails, arrowEdge: .bottom) {
+            VStack(spacing: 10) {
+                InitialsAvatar(name: title, size: 64, photo: device.photo(for: thread),
+                               isSenderID: device.isSenderID(thread))
+                Text(title)
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
+                ForEach(DeviceViewModel.unique(thread.addresses), id: \.self) { address in
+                    HStack(spacing: 8) {
+                        Text(address)
+                            .textSelection(.enabled)
+                            .foregroundStyle(.secondary)
+                        Button("Copy", systemImage: "doc.on.doc") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(address, forType: .string)
+                        }
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .help("Copy \(address)")
+                    }
+                }
+            }
+            .padding(20)
+            .frame(minWidth: 220)
+        }
+    }
+}
+
+/// A conversation's messages, newest at the bottom. A time stamp opens each
+/// stretch of conversation, and a run of messages from one side sits close
+/// together.
 private struct MessageList: View {
     let thread: SMSConversation
     let device: DeviceViewModel
 
-    private struct DayGroup: Identifiable {
-        let day: Date
-        var messages: [SMSMessage]
-        var id: Date { day }
+    private enum Entry: Identifiable {
+        case stamp(Date)
+        /// `startsRun` is false for a message that follows one from the same side.
+        case message(SMSMessage, startsRun: Bool)
+
+        var id: String {
+            switch self {
+            case .stamp(let date): "stamp-\(date.timeIntervalSince1970)"
+            case .message(let message, _): "message-\(message.id)"
+            }
+        }
     }
 
-    /// Messages split into calendar days, in order.
-    private var days: [DayGroup] {
-        let calendar = Calendar.current
-        var result: [DayGroup] = []
+    /// A pause this long starts a new stretch, with its own time stamp.
+    private static let stampGap: TimeInterval = 15 * 60
+
+    private var entries: [Entry] {
+        var result: [Entry] = []
+        var previous: SMSMessage?
         for message in thread.messages.sorted(by: { $0.date < $1.date }) {
-            let day = calendar.startOfDay(for: message.date)
-            if result.last?.day == day {
-                result[result.count - 1].messages.append(message)
-            } else {
-                result.append(DayGroup(day: day, messages: [message]))
-            }
+            let isNewStretch = previous.map {
+                message.date.timeIntervalSince($0.date) > Self.stampGap
+                    || !Calendar.current.isDate(message.date, inSameDayAs: $0.date)
+            } ?? true
+            if isNewStretch { result.append(.stamp(message.date)) }
+            result.append(.message(message, startsRun: isNewStretch || previous?.isOutgoing != message.isOutgoing))
+            previous = message
         }
         return result
     }
 
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: 4) {
+            LazyVStack(spacing: 0) {
                 Button("Load Earlier Messages") { device.loadEarlierMessages(thread.threadId) }
                     .buttonStyle(.link)
                     .font(.callout)
                     .padding(.top, 12)
-                ForEach(days) { group in
-                    Text(group.day.formatted(date: .complete, time: .omitted))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .padding(.top, 14)
-                        .padding(.bottom, 6)
-                    ForEach(group.messages) { message in
+                ForEach(entries) { entry in
+                    switch entry {
+                    case .stamp(let date):
+                        MessageDate.stamp(date)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 16)
+                            .padding(.bottom, 6)
+                    case .message(let message, let startsRun):
                         MessageBubble(message: message)
+                            .padding(.top, startsRun ? 8 : 2)
                     }
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.bottom, 12)
+            .padding(.bottom, 8)
         }
         .defaultScrollAnchor(.bottom)
+        .softScrollEdges()
     }
 }
 
@@ -304,35 +404,52 @@ private struct MessageComposer: View {
 private struct MessageBubble: View {
     let message: SMSMessage
 
+    private var alignment: Alignment { message.isOutgoing ? .trailing : .leading }
+
     var body: some View {
-        HStack {
-            if message.isOutgoing { Spacer(minLength: 80) }
-
-            VStack(alignment: message.isOutgoing ? .trailing : .leading, spacing: 4) {
-                if !message.attachments.isEmpty {
-                    Label("\(message.attachments.count) attachment\(message.attachments.count == 1 ? "" : "s")", systemImage: "paperclip")
-                        .font(.caption)
-                }
-                if !message.body.isEmpty {
-                    Text(message.body)
-                        .textSelection(.enabled)
-                }
+        VStack(alignment: message.isOutgoing ? .trailing : .leading, spacing: 4) {
+            if !message.attachments.isEmpty {
+                Label("\(message.attachments.count) attachment\(message.attachments.count == 1 ? "" : "s")", systemImage: "paperclip")
+                    .font(.caption)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .foregroundStyle(message.isOutgoing ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
-            .background(
-                message.isOutgoing ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.primary.opacity(0.08)),
-                in: .rect(cornerRadius: 17, style: .continuous)
-            )
-            .help(message.date.formatted(date: .abbreviated, time: .shortened))
-
-            if !message.isOutgoing { Spacer(minLength: 80) }
+            if !message.body.isEmpty {
+                Text(message.body)
+                    .textSelection(.enabled)
+            }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .foregroundStyle(message.isOutgoing ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+        .background(
+            message.isOutgoing ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.primary.opacity(0.08)),
+            in: .rect(cornerRadius: 17, style: .continuous)
+        )
+        .help(message.date.formatted(date: .abbreviated, time: .shortened))
+        // A bubble takes at most about two thirds of the conversation's
+        // width, so a long text stays readable and its side stays obvious.
+        .containerRelativeFrame(.horizontal, alignment: alignment) { width, _ in width * 0.68 }
+        .frame(maxWidth: .infinity, alignment: alignment)
     }
 }
 
 enum MessageDate {
+    /// The stamp over a stretch of conversation: the day in bold, then the
+    /// time, as in Messages ("Today 3:19 PM").
+    static func stamp(_ date: Date) -> Text {
+        let calendar = Calendar.current
+        let day: String
+        if calendar.isDateInToday(date) {
+            day = "Today"
+        } else if calendar.isDateInYesterday(date) {
+            day = "Yesterday"
+        } else if let days = calendar.dateComponents([.day], from: date, to: .now).day, days < 7 {
+            day = date.formatted(.dateTime.weekday(.wide))
+        } else {
+            day = date.formatted(date: .abbreviated, time: .omitted)
+        }
+        return Text(day).fontWeight(.semibold) + Text(" " + date.formatted(date: .omitted, time: .shortened))
+    }
+
     /// Time for today, weekday within a week, short date otherwise (like Messages).
     static func short(_ date: Date) -> String {
         let calendar = Calendar.current

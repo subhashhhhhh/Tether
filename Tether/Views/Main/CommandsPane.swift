@@ -14,13 +14,8 @@ struct CommandsPane: View {
     @AppStorage(RunCommandPlugin.shortcutsKey) private var shareShortcuts = false
 
     var body: some View {
-        GlassPage("Commands", subtitle: "\(device.name) can run these on this Mac from Run Command in KDE Connect.") {
-            Button("Add Command…") {
-                editing = RemoteCommand(name: "", command: "")
-            }
-            .glassButton()
-        } content: {
-            GlassSection("On this Mac", footer: "Commands run as your user account, so only add ones you trust.") {
+        GlassPage {
+            GlassSection("On this Mac", footer: "\(device.name) can run these from Run Command in KDE Connect. They run as your user account, so only add ones you trust.") {
                 if device.commands.isEmpty {
                     Label("No commands yet.", systemImage: "terminal")
                         .foregroundStyle(.secondary)
@@ -44,6 +39,14 @@ struct CommandsPane: View {
                     TetherService.shared.runCommandPlugin.refreshShortcuts()
                 }
                 .glassRow()
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button("Add Command…", systemImage: "plus") {
+                    editing = RemoteCommand(name: "", command: "")
+                }
+                .help("Add a command \(device.name) can run on this Mac")
             }
         }
         .sheet(item: $editing) { command in

@@ -36,6 +36,8 @@ public final class TetherAppModel {
     public var incomingPairRequest: PairRequestViewModel?
     public var selectedDeviceId: String?
     public var isShowingConnectByIP = false
+    /// Set by the menu bar popover; the main window shows it and clears it.
+    var sectionRequest: SectionRequest?
     public var isRunning: Bool = false
     public var notificationAuthStatus: UNAuthorizationStatus = .authorized
 

@@ -24,16 +24,7 @@ struct NotificationsPane: View {
                 description: Text("Notifications on \(device.name) show up here and in Notification Center. Turn on notification sync in KDE Connect on your phone if they don't.")
             )
         } else {
-            GlassPage("Notifications", subtitle: "\(device.notifications.count) on \(device.name)") {
-                if device.notifications.contains(where: \.isDismissable) {
-                    Button("Clear All") {
-                        for notification in device.notifications where notification.isDismissable {
-                            device.dismiss(notification)
-                        }
-                    }
-                    .glassButton()
-                }
-            } content: {
+            GlassPage {
                 ForEach(groups, id: \.app) { group in
                     GlassSection(group.app) {
                         Text(group.items.count, format: .number)
@@ -48,6 +39,18 @@ struct NotificationsPane: View {
                 }
             }
             .animation(.default, value: device.notifications)
+            .toolbar {
+                if device.notifications.contains(where: \.isDismissable) {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button("Clear All", systemImage: "xmark.circle") {
+                            for notification in device.notifications where notification.isDismissable {
+                                device.dismiss(notification)
+                            }
+                        }
+                        .help("Dismiss every notification on \(device.name)")
+                    }
+                }
+            }
         }
     }
 }
@@ -168,6 +171,8 @@ private struct NotificationRow: View {
 /// Copies a verification code and says so for a moment.
 struct CopyCodeButton: View {
     let code: String
+    /// Just the code, where there's no room for "Copy Code".
+    var isCompact = false
     @State private var copied = false
 
     var body: some View {
@@ -179,10 +184,11 @@ struct CopyCodeButton: View {
                 copied = false
             }
         } label: {
-            Label(copied ? "Copied" : "Copy Code \(code)", systemImage: copied ? "checkmark" : "doc.on.doc")
+            Label(copied ? "Copied" : (isCompact ? code : "Copy Code \(code)"), systemImage: copied ? "checkmark" : "doc.on.doc")
                 .monospacedDigit()
         }
         .accessibilityLabel(copied ? "Copied" : "Copy code \(code.map(String.init).joined(separator: " "))")
+        .help("Copy the code \(code)")
     }
 }
 

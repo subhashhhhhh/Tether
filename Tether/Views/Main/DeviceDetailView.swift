@@ -30,7 +30,13 @@ struct DeviceDetailView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle(device.isConnected ? section.title : device.name)
-        .navigationSubtitle(device.isConnected ? device.name : "")
+        // With one device the name only repeats the sidebar.
+        .navigationSubtitle(device.isConnected && appModel.pairedDevices.count > 1 ? device.name : "")
+        // Messages has two columns under the toolbar, and a title would run
+        // across the edge between them. Messages on the Mac shows none.
+        .toolbar(removing: device.isConnected && section == .messages ? .title : nil)
+        // No band behind the toolbar: content runs up under it on every page.
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     }
 
     private var connectedContent: some View {

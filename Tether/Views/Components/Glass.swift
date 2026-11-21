@@ -34,11 +34,44 @@ extension View {
         background(Color(nsColor: .quaternarySystemFill), in: .rect(cornerRadius: radius, style: .continuous))
     }
 
-    /// A text field's capsule: glass on macOS 26, a soft fill before.
+    /// Something that floats over the top of a scroll view, which scrolls
+    /// beneath it. An overlay with a matching content margin, not a safe
+    /// area inset: the system extends the toolbar's band and its line over
+    /// an inset, and what's wanted is nothing behind but the content.
+    func floatingHeader<Header: View>(height: CGFloat, @ViewBuilder content: () -> Header) -> some View {
+        contentMargins(.top, height, for: .scrollContent)
+            .overlay(alignment: .top) { content() }
+    }
+
+    /// Put on the scroll view itself: a blur, not a band with a line, where
+    /// its content passes under a bar.
     @ViewBuilder
-    func glassCapsule() -> some View {
+    func softScrollEdges() -> some View {
         if #available(macOS 26.0, *) {
-            self.glassEffect(.regular, in: .capsule)
+            self.scrollEdgeEffectStyle(.soft, for: .vertical)
+        } else {
+            self
+        }
+    }
+
+    /// Put on the scroll view itself: no edge effect at the top, for a list
+    /// whose rows should simply pass under a floating control.
+    @ViewBuilder
+    func noTopScrollEdge() -> some View {
+        if #available(macOS 26.0, *) {
+            self.scrollEdgeEffectHidden(true, for: .top)
+        } else {
+            self
+        }
+    }
+
+    /// A text field's capsule: glass on macOS 26, a soft fill before.
+    /// `interactive` makes the glass respond to the pointer, for a capsule
+    /// that is a button.
+    @ViewBuilder
+    func glassCapsule(interactive: Bool = false) -> some View {
+        if #available(macOS 26.0, *) {
+            self.glassEffect(interactive ? .regular.interactive() : .regular, in: .capsule)
         } else {
             self
                 .background(.quaternary.opacity(0.7), in: .capsule)
@@ -81,7 +114,6 @@ struct GlassCircleButton: View {
             if showsTitle {
                 Text(title)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .fixedSize()
             }
@@ -91,8 +123,8 @@ struct GlassCircleButton: View {
 
     @ViewBuilder
     private var button: some View {
+        // Full contrast: a dimmed glyph and caption read as a disabled control.
         let label = Image(systemName: systemImage)
-            .symbolRenderingMode(.hierarchical)
             .font(.system(size: size * 0.38, weight: .medium))
             .frame(width: size, height: size)
             .contentShape(.circle)
@@ -176,42 +208,20 @@ struct PanelHeader<Trailing: View>: View {
 
 // MARK: - Pages
 
-/// A device section laid out like the Overview: a scrolling column with a
-/// title, then glass sections.
-struct GlassPage<Trailing: View, Content: View>: View {
-    let title: String
-    let subtitle: String
-    @ViewBuilder var trailing: Trailing
+/// A device section laid out like the Overview: a scrolling column of
+/// sections. The page's name is the toolbar's title and its actions are
+/// toolbar buttons, so the column starts with content.
+struct GlassPage<Content: View>: View {
     @ViewBuilder var content: Content
-
-    init(_ title: String, subtitle: String,
-         @ViewBuilder trailing: () -> Trailing = { EmptyView() },
-         @ViewBuilder content: () -> Content) {
-        self.title = title
-        self.subtitle = subtitle
-        self.trailing = trailing()
-        self.content = content()
-    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(title)
-                            .font(.title2.weight(.bold))
-                        Text(subtitle)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    trailing
-                }
-                .padding(.horizontal, 4)
                 content
             }
             .frame(maxWidth: 600, alignment: .leading)
             .padding(.horizontal, 32)
-            .padding(.vertical, 28)
+            .padding(.vertical, 20)
             .frame(maxWidth: .infinity)
         }
     }

@@ -40,6 +40,10 @@ public final class BatteryPlugin: ObservableObject, TetherPlugin, @unchecked Sen
         }
         // Like desktop KDE Connect: the current charge as soon as the phone connects.
         if let packet = Self.packet(MacBattery.status()) { connection.send(packet: packet) }
+        // Ask for the phone's too, rather than waiting for it to change.
+        if connection.peerDeviceInfo?.incomingCapabilities.contains("kdeconnect.battery.request") == true {
+            connection.send(packet: NetworkPacket(type: "kdeconnect.battery.request", body: ["request": true]))
+        }
     }
 
     public func onDisconnected(connection: DeviceConnection) {

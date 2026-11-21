@@ -58,6 +58,12 @@ enum SidebarItem: Hashable {
     }
 }
 
+/// A request, from the menu bar popover, to show a device's section.
+struct SectionRequest: Equatable {
+    let deviceId: String
+    let section: DeviceSection
+}
+
 public struct MainWindowView: View {
     @Bindable var appModel: TetherAppModel
     @State private var selection: SidebarItem?
@@ -80,16 +86,20 @@ public struct MainWindowView: View {
         } detail: {
             detail
                 .toolbar {
-                    // Declared here, ahead of Settings, so the two never share a capsule.
+                    // Pushed to the trailing edge whether or not the page has a
+                    // title, with New Message in a capsule of its own.
+                    if #available(macOS 26.0, *) {
+                        ToolbarSpacer(.flexible, placement: .primaryAction)
+                    }
                     if let device = messagesDevice {
                         ToolbarItem(placement: .primaryAction) {
                             Button("New Message", systemImage: "square.and.pencil") { device.composeRequests += 1 }
                                 .help("New Message")
                                 .keyboardShortcut("n", modifiers: .command)
                         }
-                    }
-                    if #available(macOS 26.0, *) {
-                        ToolbarSpacer(.fixed, placement: .primaryAction)
+                        if #available(macOS 26.0, *) {
+                            ToolbarSpacer(.fixed, placement: .primaryAction)
+                        }
                     }
                     ToolbarItem(placement: .primaryAction) {
                         SettingsLink {
@@ -110,7 +120,11 @@ public struct MainWindowView: View {
                 onDecline: { appModel.rejectIncomingPairRequest() }
             )
         }
-        .onAppear { appModel.checkNotificationStatus() }
+        .onAppear {
+            appModel.checkNotificationStatus()
+            applySectionRequest()
+        }
+        .onChange(of: appModel.sectionRequest) { applySectionRequest() }
         .onChange(of: selection) {
             if let id = selection?.deviceId, id != appModel.selectedDeviceId {
                 appModel.selectedDeviceId = id
@@ -147,6 +161,12 @@ public struct MainWindowView: View {
         } else {
             ContentUnavailableView("No Device Selected", systemImage: "iphone.gen3", description: Text("Choose a device in the sidebar."))
         }
+    }
+
+    private func applySectionRequest() {
+        guard let request = appModel.sectionRequest else { return }
+        selection = SidebarItem(deviceId: request.deviceId, section: request.section)
+        appModel.sectionRequest = nil
     }
 
     /// The connected device whose Messages section is showing, if that's what's on screen.

@@ -10,12 +10,7 @@ struct FilesPane: View {
     let device: DeviceViewModel
 
     var body: some View {
-        GlassPage("Files", subtitle: "Send files to \(device.name), or drop them anywhere in this window.") {
-            Button("Choose Files…") {
-                device.sendFiles(FilePicker.chooseFiles(sendingTo: device.name))
-            }
-            .glassButton()
-        } content: {
+        GlassPage {
             PhoneDriveSection(device: device)
 
             GlassSection("Transfers", footer: "Files from \(device.name) are saved to your Downloads folder.") {
@@ -37,6 +32,14 @@ struct FilesPane: View {
                             .glassRow()
                     }
                 }
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button("Send Files…", systemImage: "arrow.up.doc") {
+                    device.sendFiles(FilePicker.chooseFiles(sendingTo: device.name))
+                }
+                .help("Choose files to send to \(device.name), or drop them anywhere in this window")
             }
         }
     }
