@@ -118,6 +118,7 @@ public struct DeviceInfo: Codable, Sendable, Identifiable {
         "kdeconnect.notification",
         "kdeconnect.notification.request",
         "kdeconnect.notification.reply",
+        "kdeconnect.notification.action",
         "kdeconnect.clipboard",
         "kdeconnect.clipboard.connect",
         "kdeconnect.battery",

@@ -12,6 +12,9 @@ import SwiftUI
 struct OverviewPane: View {
     @Bindable var device: DeviceViewModel
     let onSelectSection: (DeviceSection) -> Void
+    /// Set for a while after asking the phone to ring. The phone can't be
+    /// told to stop, and doesn't say when it has; someone taps it.
+    @State private var isRinging = false
 
     var body: some View {
         ScrollView {
@@ -59,8 +62,18 @@ struct OverviewPane: View {
 
             GlassGroup(spacing: 10) {
                 HStack(spacing: 10) {
-                    Button("Find Phone", systemImage: "speaker.wave.3") { device.findMyPhone() }
-                        .help("Ring \(device.name) at full volume")
+                    Button(isRinging ? "Ringing…" : "Find Phone", systemImage: "speaker.wave.3") {
+                        device.findMyPhone()
+                        isRinging = true
+                    }
+                    .symbolEffect(.variableColor.iterative, isActive: isRinging)
+                    .disabled(isRinging)
+                    .help(isRinging ? "\(device.name) rings until someone taps it" : "Ring \(device.name) at full volume")
+                    .task(id: isRinging) {
+                        guard isRinging else { return }
+                        try? await Task.sleep(for: .seconds(10))
+                        isRinging = false
+                    }
                     ClipboardMenu(device: device)
                     if device.canLock {
                         Button("Lock", systemImage: "lock") { device.lockDevice() }
@@ -95,7 +108,7 @@ struct OverviewPane: View {
                     VStack(spacing: 0) {
                         ForEach(Array(device.notifications.prefix(3).enumerated()), id: \.element.id) { index, item in
                             if index > 0 { Divider().padding(.leading, 16) }
-                            NotificationPreviewRow(item: item)
+                            NotificationPreviewRow(item: item, device: device)
                         }
                     }
                     .contentCard()
@@ -109,33 +122,7 @@ struct OverviewPane: View {
                             .buttonStyle(.link)
                     }
                 }
-                VStack(spacing: 0) {
-                    // Sending lives with the transfers it produces.
-                    HStack(spacing: 12) {
-                        Image(systemName: "arrow.up.doc")
-                            .font(.title3)
-                            .foregroundStyle(.secondary)
-                            .frame(width: 28)
-                            .accessibilityHidden(true)
-                        Text("Drop files anywhere in this window to send them to \(device.name).")
-                            .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 8)
-                        Button("Choose Files…") {
-                            device.sendFiles(FilePicker.chooseFiles(sendingTo: device.name))
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-
-                    ForEach(device.transfers.prefix(3)) { item in
-                        Divider().padding(.leading, 16)
-                        TransferRow(item: item)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 8)
-                    }
-                }
-                .contentCard()
+                TransfersCard(device: device, limit: 3)
 
                 Text("Files from \(device.name) are saved in Downloads.")
                     .font(.callout)
@@ -277,6 +264,7 @@ private struct NowPlayingPanel: View {
 
 private struct NotificationPreviewRow: View {
     let item: PhoneNotification
+    let device: DeviceViewModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -297,11 +285,8 @@ private struct NotificationPreviewRow: View {
                 Text(item.text)
                     .lineLimit(2)
             }
-            if let code = item.code {
-                CopyCodeButton(code: code)
-                    .controlSize(.small)
-                    .padding(.top, 4)
-            }
+            NotificationQuickActions(notification: item, device: device)
+                .padding(.top, 4)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 11)

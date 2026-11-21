@@ -21,6 +21,7 @@ struct MessagesPane: View {
     /// The list has focus when the page opens, so its selection is the
     /// accent colour rather than the grey of a list you've left.
     @FocusState private var isListFocused: Bool
+    @Environment(\.isSidebarCollapsed) private var isSidebarCollapsed
 
     private var filteredThreads: [SMSConversation] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -104,91 +105,136 @@ struct MessagesPane: View {
         self.pendingRecipient = nil
     }
 
+    /// The list runs up into the toolbar's height, where its search pill
+    /// sits level with the toolbar buttons. With the sidebar hidden those
+    /// buttons are in that corner, so the list stays below them.
+    private var searchTop: CGFloat { isSidebarCollapsed ? 0 : 8 }
+
     private var threadList: some View {
-        VStack(spacing: 0) {
-            List(selection: $selectedThreadId) {
-                // Room for the search pill, which the rows then scroll under.
-                Color.clear
-                    .frame(height: 38)
-                    .listRowSeparator(.hidden)
-                    .listRowInsets(EdgeInsets())
-                    .selectionDisabled()
-                    .accessibilityHidden(true)
-                if isComposing {
-                    HStack(spacing: 10) {
-                        Image(systemName: "square.and.pencil")
-                            .font(.system(size: 15, weight: .medium))
-                            .foregroundStyle(.tint)
-                            .frame(width: 36, height: 36)
-                            .background(.tint.opacity(0.15), in: .circle)
-                        Text("New Message")
-                            .fontWeight(.semibold)
-                        Spacer()
-                    }
-                    .padding(.vertical, 4)
-                    .tag(Self.draftTag)
+        // Selection is drawn here rather than by the list: a list's own is a
+        // darker blue, and turns grey when the message field has focus.
+        // Messages keeps the lighter accent colour on, always.
+        List {
+            // Room for the search pill, which the rows then scroll under.
+            Color.clear
+                .frame(height: searchTop + 40)
+                .listRowSeparator(.hidden)
+                .listRowInsets(EdgeInsets())
+                .accessibilityHidden(true)
+            if isComposing {
+                HStack(spacing: 10) {
+                    Image(systemName: "square.and.pencil")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.white)
+                        .frame(width: 36, height: 36)
+                        .background(.white.opacity(0.2), in: .circle)
+                    Text("New Message")
+                        .fontWeight(.semibold)
+                        .foregroundStyle(.white)
+                    Spacer()
                 }
-                ForEach(filteredThreads) { thread in
-                    ThreadRow(thread: thread, device: device)
-                        .tag(thread.id)
-                        .listRowInsets(EdgeInsets(top: 0, leading: 5, bottom: 0, trailing: 10))
-                }
+                .padding(.vertical, 4)
+                .padding(.leading, 10)
+                .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 10))
+                .listRowBackground(SelectionBackground(isSelected: true))
+                .listRowSeparator(.hidden)
             }
-            .listStyle(.inset)
-            .scrollContentBackground(.hidden)
-            .noTopScrollEdge()
-            .focused($isListFocused)
-            // The search pill floats over the list, as in Messages: nothing
-            // behind it, and rows pass under it as they scroll.
-            // Overlaid, not inset: the system draws the toolbar's band and its
-            // line over any top inset, and the pill should have only rows
-            // behind it. The list's first row is the room it starts in.
-            .overlay(alignment: .top) {
-                SearchPill(text: $searchText)
-                    .padding(.horizontal, 10)
+            ForEach(filteredThreads) { thread in
+                let isSelected = thread.id == selectedThreadId
+                ThreadRow(thread: thread, device: device, isSelected: isSelected)
+                    .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 10))
+                    .listRowBackground(SelectionBackground(isSelected: isSelected))
+                    .listRowSeparator(isSelected ? .hidden : .automatic)
+                    .contentShape(.rect)
+                    .onTapGesture { selectedThreadId = thread.id }
+                    .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
             }
         }
+        .listStyle(.inset)
+        .scrollContentBackground(.hidden)
+        .noTopScrollEdge()
+        .focusable()
+        .focused($isListFocused)
+        .focusEffectDisabled()
+        .onMoveCommand { direction in
+            let ids = filteredThreads.map(\.id)
+            guard let current = selectedThreadId.flatMap(ids.firstIndex) else { return }
+            switch direction {
+            case .up where current > 0: selectedThreadId = ids[current - 1]
+            case .down where current < ids.count - 1: selectedThreadId = ids[current + 1]
+            default: break
+            }
+        }
+        // Overlaid, not inset: the system draws the toolbar's band and its
+        // line over any top inset, and the pill should have only rows
+        // behind it, as in Messages.
+        .overlay(alignment: .top) {
+            SearchPill(text: $searchText)
+                .padding(.horizontal, 10)
+                .padding(.top, searchTop)
+        }
+        .ignoresSafeArea(.container, edges: isSidebarCollapsed ? [] : .top)
+    }
+}
+
+/// The selected conversation's fill: the accent colour, inset and rounded.
+private struct SelectionBackground: View {
+    let isSelected: Bool
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(isSelected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.clear))
+            .padding(.horizontal, 8)
     }
 }
 
 private struct ThreadRow: View {
     let thread: SMSConversation
     let device: DeviceViewModel
-    /// Increased while the row is selected, when a tinted dot would vanish
-    /// into the selection colour.
-    @Environment(\.backgroundProminence) private var backgroundProminence
+    let isSelected: Bool
+
+    private var secondary: AnyShapeStyle {
+        isSelected ? AnyShapeStyle(.white.opacity(0.85)) : AnyShapeStyle(.secondary)
+    }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            HStack(alignment: .center, spacing: 5) {
-                // Inside the row, as in Messages, so it's part of the selection.
-                Circle()
-                    .fill(backgroundProminence == .increased ? AnyShapeStyle(.white) : AnyShapeStyle(.tint))
-                    .frame(width: 7, height: 7)
-                    .opacity(thread.unreadCount > 0 ? 1 : 0)
-                    .accessibilityLabel("Unread")
-                    .accessibilityHidden(thread.unreadCount == 0)
-                InitialsAvatar(name: device.title(for: thread), size: 36, photo: device.photo(for: thread),
-                               isSenderID: device.isSenderID(thread))
-            }
+        // Centred: with a three-line row the avatar and its dot sit in the
+        // middle of it, as in Messages, not at the top.
+        HStack(alignment: .center, spacing: 10) {
+            // The list insets a row 8 pt inside the selection (measured in a
+            // render); 10 more puts the avatar 18 pt in, as in Messages. The
+            // dot is drawn in that margin and takes no room of its own.
+            InitialsAvatar(name: device.title(for: thread), size: 36, photo: device.photo(for: thread),
+                           isSenderID: device.isSenderID(thread))
+                .padding(.leading, 10)
+                .overlay(alignment: .leading) {
+                    Circle()
+                        .fill(isSelected ? AnyShapeStyle(.white) : AnyShapeStyle(.tint))
+                        .frame(width: 8, height: 8)
+                        .offset(x: -4)
+                        .opacity(thread.unreadCount > 0 ? 1 : 0)
+                        .accessibilityLabel("Unread")
+                        .accessibilityHidden(thread.unreadCount == 0)
+                }
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(device.title(for: thread))
-                        .fontWeight(thread.unreadCount > 0 ? .semibold : .regular)
+                        .fontWeight(.semibold)
                         .lineLimit(1)
                     Spacer(minLength: 4)
                     Text(MessageDate.short(thread.lastDate))
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(secondary)
                 }
                 Text(thread.snippet)
                     .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(secondary)
                     .lineLimit(2)
             }
         }
-        .padding(.vertical, 4)
+        .foregroundStyle(isSelected ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+        .padding(.vertical, 6)
     }
 }
 
@@ -196,25 +242,43 @@ private struct ConversationView: View {
     let thread: SMSConversation
     let device: DeviceViewModel
     @FocusState private var isComposerFocused: Bool
+    /// The message field's height, which grows with its text, so the last
+    /// message always clears it.
+    @State private var composerHeight: CGFloat = 56
 
     var body: some View {
-        VStack(spacing: 0) {
-            // The header floats at the top of the window, level with the
-            // toolbar's buttons as in Messages, and messages scroll under it.
-            MessageList(thread: thread, device: device)
-                .floatingHeader(height: 80) {
+        // The header and the message field float over the conversation with
+        // nothing behind them, and blur what's behind only under the pointer.
+        MessageList(thread: thread, device: device, topRoom: 86, bottomRoom: composerHeight)
+            .overlay(alignment: .top) {
+                HoverBlurBar(edge: .top) {
                     ConversationHeader(thread: thread, device: device)
                         .frame(maxWidth: .infinity)
                         .padding(.horizontal, 60)
                         .padding(.top, 8)
+                        .padding(.bottom, 14)
+                        // New Message at the conversation's top-leading
+                        // corner, where Messages has it.
+                        .overlay(alignment: .topLeading) {
+                            GlassCircleButton(title: "New Message", systemImage: "square.and.pencil", showsTitle: false, size: 36) {
+                                device.composeRequests += 1
+                            }
+                            .keyboardShortcut("n", modifiers: .command)
+                            .padding(.leading, 12)
+                            .padding(.top, 8)
+                        }
                 }
-                .ignoresSafeArea(.container, edges: .top)
-
-            MessageComposer(device: device, thread: thread, isFocused: $isComposerFocused) { text, sim in
-                guard !thread.addresses.isEmpty else { return }
-                device.sendSMS(to: thread.addresses, message: text, threadId: thread.threadId, subId: sim)
             }
-        }
+            .overlay(alignment: .bottom) {
+                HoverBlurBar(edge: .bottom) {
+                    MessageComposer(device: device, thread: thread, isFocused: $isComposerFocused) { text, sim in
+                        guard !thread.addresses.isEmpty else { return }
+                        device.sendSMS(to: thread.addresses, message: text, threadId: thread.threadId, subId: sim)
+                    }
+                }
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { composerHeight = $0 }
+            }
+            .ignoresSafeArea(.container, edges: .top)
     }
 }
 
@@ -290,6 +354,9 @@ private struct ConversationHeader: View {
 private struct MessageList: View {
     let thread: SMSConversation
     let device: DeviceViewModel
+    /// Room left clear at each end for what floats over the conversation.
+    var topRoom: CGFloat = 0
+    var bottomRoom: CGFloat = 0
 
     private enum Entry: Identifiable {
         case stamp(Date)
@@ -346,8 +413,12 @@ private struct MessageList: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 8)
         }
+        .contentMargins(.top, topRoom, for: .scrollContent)
+        .contentMargins(.bottom, bottomRoom, for: .scrollContent)
         .defaultScrollAnchor(.bottom)
-        .softScrollEdges()
+        // No system edge effect under the toolbar: the header's own
+        // blur-on-hover is the only thing that should appear there.
+        .noTopScrollEdge()
     }
 }
 

@@ -7,6 +7,7 @@ import SwiftUI
 
 struct NotificationsPane: View {
     let device: DeviceViewModel
+    @State private var isConfirmingDismissAll = false
 
     /// Notifications grouped by app, the app with the newest one first.
     private var groups: [(app: String, items: [PhoneNotification])] {
@@ -24,28 +25,65 @@ struct NotificationsPane: View {
                 description: Text("Notifications on \(device.name) show up here and in Notification Center. Turn on notification sync in KDE Connect on your phone if they don't.")
             )
         } else {
-            GlassPage {
+            // A list, so a row can be swiped away with two fingers as on the phone.
+            List {
                 ForEach(groups, id: \.app) { group in
-                    GlassSection(group.app) {
+                    // An ordinary row, not a section header: a list pins its
+                    // headers and gives them a band of their own.
+                    HStack {
+                        Text(group.app)
+                            .font(.title3.weight(.semibold))
+                        Spacer()
                         Text(group.items.count, format: .number)
-                            .font(.callout)
                             .foregroundStyle(.secondary)
-                    } content: {
-                        ForEach(Array(group.items.enumerated()), id: \.element.id) { index, notification in
-                            if index > 0 { Divider().padding(.leading, 16) }
-                            NotificationRow(notification: notification, device: device)
-                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
+                    .padding(.bottom, 2)
+                    .frame(maxWidth: 680)
+                    .frame(maxWidth: .infinity)
+                    .listRowInsets(EdgeInsets())
+                    .listRowSeparator(.hidden)
+
+                    ForEach(group.items) { notification in
+                        // The row is the window's width, so a swipe carries
+                        // it to the edge; its content keeps to the column.
+                        NotificationRow(notification: notification, device: device)
+                            .frame(maxWidth: 680)
+                            .frame(maxWidth: .infinity)
+                            .listRowInsets(EdgeInsets())
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                if notification.isDismissable {
+                                    Button("Dismiss", systemImage: "xmark", role: .destructive) {
+                                        device.dismiss(notification)
+                                    }
+                                }
+                            }
                     }
                 }
             }
+            .listStyle(.inset)
+            .scrollContentBackground(.hidden)
             .animation(.default, value: device.notifications)
+            // It clears the phone's notification shade too, so it asks first.
+            .confirmationDialog("Dismiss all notifications on \(device.name)?", isPresented: $isConfirmingDismissAll) {
+                Button("Dismiss All", role: .destructive) {
+                    for notification in device.notifications where notification.isDismissable {
+                        device.dismiss(notification)
+                    }
+                }
+            } message: {
+                Text("They're dismissed on the phone as well.")
+            }
             .toolbar {
                 if device.notifications.contains(where: \.isDismissable) {
                     ToolbarItem(placement: .primaryAction) {
-                        Button("Clear All") {
-                            for notification in device.notifications where notification.isDismissable {
-                                device.dismiss(notification)
-                            }
+                        Button {
+                            isConfirmingDismissAll = true
+                        } label: {
+                            Label("Dismiss All", systemImage: "xmark.circle")
+                                .labelStyle(.titleAndIcon)
+                                .padding(.horizontal, 4)
                         }
                         .help("Dismiss every notification on \(device.name)")
                     }
@@ -122,20 +160,9 @@ private struct NotificationRow: View {
                 }
                 .padding(.top, 6)
                 .onAppear { isReplyFocused = true }
-            } else if notification.code != nil || notification.replyId != nil || notification.isDismissable {
-                HStack(spacing: 8) {
-                    if let code = notification.code {
-                        CopyCodeButton(code: code)
-                    }
-                    if notification.replyId != nil {
-                        Button("Reply") { isReplying = true }
-                    }
-                    if notification.isDismissable {
-                        Button("Dismiss") { device.dismiss(notification) }
-                    }
-                }
-                .controlSize(.small)
-                .padding(.top, 6)
+            } else {
+                NotificationQuickActions(notification: notification, device: device) { isReplying = true }
+                    .padding(.top, 6)
             }
         }
         .padding(.horizontal, 16)
@@ -169,6 +196,36 @@ private struct NotificationRow: View {
 }
 
 /// Copies a verification code and says so for a moment.
+/// What can be done about a notification, as small buttons: copy its code,
+/// reply, the buttons the notification has on the phone, and dismiss.
+struct NotificationQuickActions: View {
+    let notification: PhoneNotification
+    let device: DeviceViewModel
+    /// Opens the reply field, where the surface has one.
+    var onReply: (() -> Void)?
+
+    var body: some View {
+        if notification.code != nil || !notification.actions.isEmpty || notification.isDismissable
+            || (notification.replyId != nil && onReply != nil) {
+            HStack(spacing: 8) {
+                if let code = notification.code {
+                    CopyCodeButton(code: code)
+                }
+                if notification.replyId != nil, let onReply {
+                    Button("Reply", action: onReply)
+                }
+                ForEach(notification.actions, id: \.self) { action in
+                    Button(action) { device.perform(action, on: notification) }
+                }
+                if notification.isDismissable {
+                    Button("Dismiss") { device.dismiss(notification) }
+                }
+            }
+            .controlSize(.small)
+        }
+    }
+}
+
 struct CopyCodeButton: View {
     let code: String
     /// Just the code, where there's no room for "Copy Code".

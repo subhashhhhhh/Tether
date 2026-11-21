@@ -84,6 +84,12 @@ enum DockPresence {
     }
 }
 
+extension EnvironmentValues {
+    /// True while the window's sidebar is hidden, when its toolbar buttons
+    /// sit over the detail area's top-leading corner.
+    @Entry var isSidebarCollapsed = false
+}
+
 /// A request, from the menu bar popover, to show a device's section.
 struct SectionRequest: Equatable {
     let deviceId: String
@@ -93,6 +99,7 @@ struct SectionRequest: Equatable {
 public struct MainWindowView: View {
     @Bindable var appModel: TetherAppModel
     @State private var selection: SidebarItem?
+    @State private var columnVisibility = NavigationSplitViewVisibility.automatic
 
     public init(appModel: TetherAppModel) {
         self.init(appModel: appModel, initialSection: .overview)
@@ -104,25 +111,19 @@ public struct MainWindowView: View {
     }
 
     public var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             DeviceSidebar(appModel: appModel, selection: $selection) {
                 appModel.isShowingConnectByIP = true
             }
             .navigationSplitViewColumnWidth(min: 200, ideal: 230, max: 300)
         } detail: {
             detail
+                .environment(\.isSidebarCollapsed, columnVisibility == .detailOnly)
                 .toolbar {
-                    // Pushed to the trailing edge whether or not the page has a
-                    // title, with New Message in a capsule of its own.
+                    // Page actions sit at the trailing edge whether or not
+                    // anything else is in the toolbar.
                     if #available(macOS 26.0, *) {
                         ToolbarSpacer(.flexible, placement: .primaryAction)
-                    }
-                    if let device = messagesDevice {
-                        ToolbarItem(placement: .primaryAction) {
-                            Button("New Message", systemImage: "square.and.pencil") { device.composeRequests += 1 }
-                                .help("New Message")
-                                .keyboardShortcut("n", modifiers: .command)
-                        }
                     }
                 }
         }
@@ -186,12 +187,6 @@ public struct MainWindowView: View {
         guard let request = appModel.sectionRequest else { return }
         selection = SidebarItem(deviceId: request.deviceId, section: request.section)
         appModel.sectionRequest = nil
-    }
-
-    /// The connected device whose Messages section is showing, if that's what's on screen.
-    private var messagesDevice: DeviceViewModel? {
-        guard case .section(let id, .messages) = selection else { return nil }
-        return appModel.connectedDevices.first { $0.id == id && !$0.smsThreads.isEmpty }
     }
 
     /// The sheet can only be closed by answering it, which clears the request in the model.
@@ -326,16 +321,25 @@ struct DeviceSidebar: View {
     }
 }
 
-/// A device's row. At its trailing edge: what's waiting while it's folded,
-/// else its battery, or "Offline".
+/// A device's row: its name, then how it's doing in a quieter voice on the
+/// same line. One line keeps the disclosure arrow and the icon level with
+/// the text, and a Label lets the sidebar colour the icon, white on a
+/// selected row included. At the trailing edge, what's waiting while folded.
 private struct DeviceLabel: View {
     let device: DeviceViewModel
     let pending: Int
 
     var body: some View {
         Label {
-            Text(device.name)
-                .lineLimit(1)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(device.name)
+                    .lineLimit(1)
+                    .layoutPriority(1)
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
         } icon: {
             if device.isConnected {
                 Image(systemName: device.deviceType.systemImageName)
@@ -345,16 +349,18 @@ private struct DeviceLabel: View {
             }
         }
         .foregroundStyle(device.isConnected ? .primary : .secondary)
-        .badge(Text(trailing))
-        .help(device.statusLine)
-        .accessibilityLabel("\(device.name), \(device.statusLine)")
+        .badge(pending)
+        .help(detail)
+        .accessibilityLabel("\(device.name), \(detail)")
     }
 
-    private var trailing: String {
-        guard device.isConnected else { return "Offline" }
-        if pending > 0 { return "\(pending) new" }
-        if let battery = device.batteryPercent { return "\(battery)%" }
-        return ""
+    /// "Wi-Fi · 27% · LTE", or when it was last seen.
+    private var detail: String {
+        guard device.isConnected else { return device.statusLine }
+        var parts = [device.isViaTailscale ? "Tailscale" : "Wi-Fi"]
+        if let battery = device.batteryPercent { parts.append("\(battery)%") }
+        if let network = device.networkType, !network.isEmpty, !parts.contains(network) { parts.append(network) }
+        return parts.joined(separator: " · ")
     }
 }
 

@@ -278,6 +278,9 @@ public final class TetherAppModel {
         vm.onReplyToNotification = { notification, text in
             service.notificationPlugin.reply(to: notification, text: text)
         }
+        vm.onNotificationAction = { notification, action in
+            service.notificationPlugin.perform(action, on: notification)
+        }
         vm.onDismissNotification = { notification in
             service.notificationPlugin.dismiss(notification)
         }

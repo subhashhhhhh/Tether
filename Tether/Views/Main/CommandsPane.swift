@@ -31,8 +31,15 @@ struct CommandsPane: View {
 
             GlassSection("Shortcuts") {
                 Toggle(isOn: $shareShortcuts) {
-                    Text("Show my Shortcuts on the phone")
-                    Text("Lists every shortcut from the Shortcuts app in Run Command, so \(device.name) can run them on this Mac.")
+                    // Fills the row, so the switch sits at its trailing edge.
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Show my Shortcuts on the phone")
+                        Text("Lists every shortcut from the Shortcuts app in Run Command, so \(device.name) can run them on this Mac.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .toggleStyle(.switch)
                 .onChange(of: shareShortcuts) {

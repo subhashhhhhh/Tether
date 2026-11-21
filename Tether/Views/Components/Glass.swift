@@ -43,17 +43,6 @@ extension View {
             .overlay(alignment: .top) { content() }
     }
 
-    /// Put on the scroll view itself: a blur, not a band with a line, where
-    /// its content passes under a bar.
-    @ViewBuilder
-    func softScrollEdges() -> some View {
-        if #available(macOS 26.0, *) {
-            self.scrollEdgeEffectStyle(.soft, for: .vertical)
-        } else {
-            self
-        }
-    }
-
     /// Put on the scroll view itself: no edge effect at the top, for a list
     /// whose rows should simply pass under a floating control.
     @ViewBuilder
@@ -147,6 +136,35 @@ struct GlassCircleButton: View {
                 .background(isProminent ? AnyShapeStyle(.tint) : AnyShapeStyle(.regularMaterial), in: .circle)
                 .overlay(Circle().strokeBorder(.separator.opacity(0.6), lineWidth: 0.5))
         }
+    }
+}
+
+/// A bar floating over a scroll view. It has no background at rest: what
+/// scrolls behind shows through untouched. While the pointer is over it,
+/// what's behind blurs, fading out at the bar's inner edge so there is no line.
+struct HoverBlurBar<Content: View>: View {
+    let edge: VerticalEdge
+    @ViewBuilder var content: Content
+    @State private var isHovering = false
+
+    var body: some View {
+        content
+            .frame(maxWidth: .infinity)
+            .background {
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                    .mask {
+                        LinearGradient(
+                            stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.7), .init(color: .clear, location: 1)],
+                            startPoint: edge == .top ? .top : .bottom,
+                            endPoint: edge == .top ? .bottom : .top
+                        )
+                    }
+                    .opacity(isHovering ? 1 : 0)
+                    .allowsHitTesting(false)
+            }
+            .onHover { isHovering = $0 }
+            .animation(.easeOut(duration: 0.18), value: isHovering)
     }
 }
 

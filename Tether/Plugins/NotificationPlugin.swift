@@ -18,6 +18,8 @@ public struct PhoneNotification: Identifiable, Hashable, Sendable {
     /// Present when the phone accepts an inline reply (messaging apps).
     public let replyId: String?
     public let isDismissable: Bool
+    /// The notification's own buttons on the phone ("Mark as read", "Mute").
+    public var actions: [String] = []
     /// A one-time verification code found in the title or text.
     public var code: String? = nil
     /// Artwork supplied by the phone; it may be a contact photo rather than an app logo.
@@ -28,7 +30,8 @@ public struct PhoneNotification: Identifiable, Hashable, Sendable {
     public private(set) var imageIsGlyph = false
 
     public init(id: String, deviceId: String, appName: String, title: String, text: String, date: Date,
-                replyId: String?, isDismissable: Bool, code: String? = nil, imageData: Data? = nil) {
+                replyId: String?, isDismissable: Bool, code: String? = nil, imageData: Data? = nil,
+                actions: [String] = []) {
         self.id = id
         self.deviceId = deviceId
         self.appName = appName
@@ -40,6 +43,7 @@ public struct PhoneNotification: Identifiable, Hashable, Sendable {
         self.code = code
         self.imageData = imageData
         self.imageIsGlyph = imageData.map(NotificationImages.isGlyph) ?? false
+        self.actions = actions
     }
 }
 
@@ -186,6 +190,16 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
         TetherLog("[NotificationPlugin] Sent notification reply to \(notification.deviceId)")
     }
 
+    /// Presses one of the notification's own buttons on the phone.
+    public func perform(_ action: String, on notification: PhoneNotification) {
+        guard let connection = activeConnections[notification.deviceId] else { return }
+        connection.send(packet: NetworkPacket(
+            type: "kdeconnect.notification.action",
+            body: ["key": notification.id, "action": action]
+        ))
+        TetherLog("[NotificationPlugin] Sent notification action to \(notification.deviceId)")
+    }
+
     /// Asks the phone to dismiss a notification; the phone confirms with a cancel packet.
     public func dismiss(_ notification: PhoneNotification) {
         if let connection = activeConnections[notification.deviceId] {
@@ -245,7 +259,9 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
             replyId: replyId,
             isDismissable: packet.bool(for: "isClearable", default: true),
             code: OneTimeCode.find(in: title + "\n" + text),
-            imageData: images.image(deviceId: deviceId, hash: packet.string(for: "payloadHash"))
+            imageData: images.image(deviceId: deviceId, hash: packet.string(for: "payloadHash")),
+            // The phone can send a button with no title; there's nothing to show for it.
+            actions: packet.stringArray(for: "actions").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
         )
         var list = notifications[deviceId] ?? []
         list.removeAll { $0.id == notifId }
