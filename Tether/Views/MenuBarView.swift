@@ -101,8 +101,18 @@ public struct MenuBarView: View {
         // Just the routine announcement: a thorough one makes a connected phone reconnect.
         .onAppear {
             appModel.refreshDiscovery(thorough: false)
-            clipboardPreview = NSPasteboard.general.string(forType: .string).map(Self.preview)
+            readClipboard()
         }
+        // The popover is kept between openings, so onAppear runs only once;
+        // the clipboard is read again each time it's shown.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            readClipboard()
+        }
+    }
+
+    private func readClipboard() {
+        let preview = NSPasteboard.general.string(forType: .string).map(Self.preview)
+        if preview != clipboardPreview { clipboardPreview = preview }
     }
 
     // MARK: - Sections
@@ -180,15 +190,6 @@ public struct MenuBarView: View {
                 }
             }
 
-            // Says what it will send, so there's no guessing which way it goes.
-            MenuRow(title: "Send Clipboard", systemImage: "doc.on.clipboard",
-                    subtitle: clipboardPreview.flatMap { $0.isEmpty ? nil : $0 } ?? "Nothing copied on this Mac") {
-                closePopover()
-                device.sendClipboard()
-            }
-            .help("Send this Mac's clipboard to \(device.name)")
-            .disabled(clipboardPreview?.isEmpty ?? true)
-
             if let transfer = device.transfers.first(where: { $0.status == .transferring }) {
                 Button { open(.files, on: device) } label: {
                     VStack(alignment: .leading, spacing: 3) {
@@ -235,6 +236,13 @@ public struct MenuBarView: View {
                 device.sendFiles(FilePicker.chooseFiles(sendingTo: device.name))
             }
             .help("Choose files to send to \(device.name)")
+            ActionTile(title: "Send Clipboard", systemImage: "doc.on.clipboard") {
+                closePopover()
+                device.sendClipboard()
+            }
+            // Says what it would send, so there's no guessing which way it goes.
+            .help(clipboardPreview.flatMap { $0.isEmpty ? nil : "Send “\($0)” to \(device.name)" } ?? "Nothing copied on this Mac")
+            .disabled(clipboardPreview?.isEmpty ?? true)
         }
         .padding(.horizontal, 6)
     }
@@ -440,6 +448,7 @@ private struct ActionTile: View {
     let title: String
     let systemImage: String
     let action: () -> Void
+    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         Button(action: action) {
@@ -454,7 +463,9 @@ private struct ActionTile: View {
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 3)
-            .foregroundStyle(.primary)
+            // Full strength when it can be used, dimmed when it can't:
+            // forcing .primary hid the disabled look.
+            .foregroundStyle(isEnabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
         }
         .glassButton()
         .buttonBorderShape(.roundedRectangle(radius: 10))
