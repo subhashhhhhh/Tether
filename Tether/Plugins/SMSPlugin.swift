@@ -20,7 +20,9 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
         [Self.messagesType, Self.attachmentFileType]
     }
 
-    @Published public private(set) var conversations: [Int64: SMSConversation] = [:]
+    /// By device, then thread: thread IDs are only unique on one phone, and
+    /// with two phones a reply must reach the right one.
+    @Published public private(set) var conversations: [String: [Int64: SMSConversation]] = [:]
     @Published public private(set) var activeThreadId: Int64?
 
     private let lock = NSLock()
@@ -34,13 +36,13 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
     public func onDisconnected(connection: DeviceConnection) {}
 
     public func handlePacket(connection: DeviceConnection, packet: NetworkPacket) {
-        if packet.type == Self.messagesType {
-            handleBatchMessages(packet: packet)
+        if packet.type == Self.messagesType, let deviceId = connection.peerDeviceInfo?.deviceId {
+            handleBatchMessages(packet: packet, deviceId: deviceId)
         }
     }
 
     public func handlePayload(connection: DeviceConnection, packet: NetworkPacket, fileURL payloadURL: URL) {
-        guard packet.type == Self.attachmentFileType else { return }
+        guard packet.type == Self.attachmentFileType, let deviceId = connection.peerDeviceInfo?.deviceId else { return }
         // `filename` is the attachment's identifier on the phone; it is matched
         // as-is below but must never be used as a path without sanitising.
         let filename = packet.string(for: "filename") ?? "attachment"
@@ -58,7 +60,7 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
             let targetThreadId = (packet.int64(for: "thread_id")) != 0 ? packet.int64(for: "thread_id") : nil
             if let threadId = targetThreadId {
                 DispatchQueue.main.async {
-                    if var conversation = self.conversations[threadId] {
+                    if var conversation = self.conversations[deviceId]?[threadId] {
                         for msgIndex in conversation.messages.indices {
                             for attIndex in conversation.messages[msgIndex].attachments.indices {
                                 if conversation.messages[msgIndex].attachments[attIndex].uniqueIdentifier == filename {
@@ -66,7 +68,7 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
                                 }
                             }
                         }
-                        self.conversations[threadId] = conversation
+                        self.conversations[deviceId, default: [:]][threadId] = conversation
                     }
                 }
             }
@@ -103,7 +105,8 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
     /// The page before the oldest message loaded, growing like desktop KDE
     /// Connect's: as many as are already loaded, at least 50.
     public func requestEarlierMessages(threadId: Int64, connection: DeviceConnection) {
-        let loaded = DispatchQueue.main.sync { conversations[threadId]?.messages ?? [] }
+        let deviceId = connection.peerDeviceInfo?.deviceId ?? ""
+        let loaded = DispatchQueue.main.sync { conversations[deviceId]?[threadId]?.messages ?? [] }
         guard let oldest = loaded.first?.date else {
             requestConversation(threadId: threadId, connection: connection)
             return
@@ -146,7 +149,8 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
         let activeSIMs = connection.peerDeviceInfo
             .flatMap { TetherService.shared.connectivityReportPlugin.subscriptions[$0.deviceId] }
             .map { Set($0.keys) } ?? []
-        let conversationSubId = threadId.flatMap { conversations[$0]?.messages.last(where: { $0.subId != nil })?.subId }
+        let deviceId = connection.peerDeviceInfo?.deviceId ?? ""
+        let conversationSubId = threadId.flatMap { conversations[deviceId]?[$0]?.messages.last(where: { $0.subId != nil })?.subId }
         let chosenSubId = (subId ?? conversationSubId).flatMap { activeSIMs.count > 1 && activeSIMs.contains($0) ? $0 : nil }
         if let chosenSubId {
             body["subID"] = AnyCodable(chosenSubId)
@@ -169,9 +173,9 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
                 read: true
             )
             DispatchQueue.main.async {
-                if var conv = self.conversations[targetThreadId] {
+                if var conv = self.conversations[deviceId]?[targetThreadId] {
                     conv.messages.append(optimisticMessage)
-                    self.conversations[targetThreadId] = conv
+                    self.conversations[deviceId, default: [:]][targetThreadId] = conv
                 }
             }
         }
@@ -185,7 +189,7 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
 
     // MARK: - Internal Message Parsing
 
-    private func handleBatchMessages(packet: NetworkPacket) {
+    private func handleBatchMessages(packet: NetworkPacket, deviceId: String) {
         let rawMessages = packet.objectArray(for: "messages")
         guard !rawMessages.isEmpty else { return }
 
@@ -199,9 +203,11 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
         guard !parsedMessages.isEmpty else { return }
 
         DispatchQueue.main.async {
+            // Merged into a copy and published once, not once per message.
+            var threads = self.conversations[deviceId] ?? [:]
             for message in parsedMessages {
                 let threadId = message.threadId
-                var conversation = self.conversations[threadId] ?? SMSConversation(threadId: threadId, addresses: message.addresses)
+                var conversation = threads[threadId] ?? SMSConversation(threadId: threadId, addresses: message.addresses)
 
                 if conversation.addresses.isEmpty && !message.addresses.isEmpty {
                     conversation.addresses = message.addresses
@@ -218,9 +224,10 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
 
                 // Sort chronologically
                 conversation.messages.sort(by: { $0.date < $1.date })
-                self.conversations[threadId] = conversation
+                threads[threadId] = conversation
             }
-            TetherLog("[SMSPlugin] Processed \(parsedMessages.count) messages across \(self.conversations.count) threads")
+            self.conversations[deviceId] = threads
+            TetherLog("[SMSPlugin] Processed \(parsedMessages.count) messages across \(threads.count) threads")
         }
     }
 }

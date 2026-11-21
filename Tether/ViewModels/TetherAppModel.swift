@@ -289,7 +289,6 @@ public final class TetherAppModel {
     private func updateDevicePluginStates() {
         guard !isMockMode else { return }
         let service = TetherService.shared
-        let threads = service.smsPlugin.conversations.values.sorted { $0.lastDate > $1.lastDate }
 
         for dev in connectedDevices {
             let id = dev.id
@@ -309,7 +308,7 @@ public final class TetherAppModel {
                 .map { PhoneSIM(id: $1.key, number: $0 + 1, networkType: $1.value.shortLabel) }
             update(dev, \.sims, sims)
             update(dev, \.transfers, service.sharePlugin.transfers.filter { $0.deviceId == id })
-            update(dev, \.smsThreads, threads)
+            update(dev, \.smsThreads, (service.smsPlugin.conversations[id] ?? [:]).values.sorted { $0.lastDate > $1.lastDate })
             update(dev, \.contacts, service.contactsPlugin.books[id] ?? ContactBook())
             update(dev, \.commands, service.runCommandPlugin.commands)
             update(dev, \.notifications, service.notificationPlugin.notifications[id] ?? [])

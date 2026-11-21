@@ -459,6 +459,20 @@ private struct MessageList: View {
     }
 }
 
+/// Half-typed messages, so switching conversation or section doesn't lose
+/// one. Kept for the session only, and not observed: only the composer that
+/// owns a draft reads it, when it appears.
+@MainActor
+private enum MessageDrafts {
+    private static var texts: [String: String] = [:]
+
+    static func key(device: DeviceViewModel, thread: SMSConversation?) -> String {
+        "\(device.id):\(thread.map { String($0.threadId) } ?? "new")"
+    }
+    static func text(for key: String) -> String { texts[key] ?? "" }
+    static func set(_ text: String, for key: String) { texts[key] = text.isEmpty ? nil : text }
+}
+
 /// The message field with the SIM menu and send button, under a conversation
 /// or a new message.
 private struct MessageComposer: View {
@@ -499,11 +513,16 @@ private struct MessageComposer: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .onChange(of: thread?.threadId, initial: true) { sim = device.defaultSIM(for: thread) }
+        .onChange(of: thread?.threadId, initial: true) {
+            sim = device.defaultSIM(for: thread)
+            draft = MessageDrafts.text(for: draftKey)
+        }
+        .onChange(of: draft) { MessageDrafts.set(draft, for: draftKey) }
         .onChange(of: device.sims) { if sim == nil { sim = device.defaultSIM(for: thread) } }
     }
 
     private var trimmedDraft: String { draft.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var draftKey: String { MessageDrafts.key(device: device, thread: thread) }
 
     private func submit() {
         let text = trimmedDraft
@@ -791,7 +810,8 @@ private struct SIMPicker: View {
             } label: {
                 Label(selectedLabel, systemImage: "simcard")
             }
-            .menuStyle(.borderlessButton)
+            .menuStyle(.button)
+            .buttonStyle(.borderless)
             .fixedSize()
             .help("Choose which SIM sends this message")
             .alert("Rename \(renaming.map(label) ?? "SIM")", isPresented: Binding(

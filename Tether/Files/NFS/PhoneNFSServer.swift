@@ -94,6 +94,9 @@ actor PhoneNFSServer {
         var size: Int64 = 0
         var modified = Date()
         var dirty = true
+        /// Counts writes, so an upload knows whether what it sent is still
+        /// the latest. Size alone misses a write that overwrites in place.
+        var generation = 0
         var lastWrite = Date()
         var upload: Task<Void, Error>?
 
@@ -886,6 +889,7 @@ actor PhoneNFSServer {
 
     private func touch(_ staging: Staged, path: String) {
         staging.dirty = true
+        staging.generation += 1
         staging.lastWrite = Date()
         staging.modified = Date()
         chunks.remove(path: path)
@@ -905,12 +909,16 @@ actor PhoneNFSServer {
             return
         }
         if let running = staging.upload {
+            // That upload may have started before the latest writes; once it
+            // ends, send again if anything is still unsent.
             try await running.value
+            try await flush(path)
             return
         }
         let folder = parent(of: path)
         let real = (path as NSString).deletingLastPathComponent // staged paths are real phone paths
         let descriptor = staging.descriptor, size = staging.size, modified = staging.modified
+        let generation = staging.generation
         let router = router
         let upload = Task {
             _ = try await router.run {
@@ -921,7 +929,7 @@ actor PhoneNFSServer {
         do {
             try await upload.value
             staging.upload = nil
-            if staging.size == size { staging.dirty = false }
+            if staging.generation == generation { staging.dirty = false }
             invalidateListing(folder)
             // Keep the local copy briefly for reads; drop it once idle.
             Task {
