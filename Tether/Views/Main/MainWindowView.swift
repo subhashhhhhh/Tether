@@ -82,6 +82,13 @@ enum DockPresence {
             if !hasWindow { NSApp.setActivationPolicy(.accessory) }
         }
     }
+
+    /// The count on the Dock icon, which is there while the window is open.
+    static func setBadge(_ count: Int) {
+        guard !isTesting else { return }
+        let label = count > 0 ? String(count) : nil
+        if NSApp.dockTile.badgeLabel != label { NSApp.dockTile.badgeLabel = label }
+    }
 }
 
 extension EnvironmentValues {
@@ -108,6 +115,13 @@ public struct MainWindowView: View {
     init(appModel: TetherAppModel, initialSection: DeviceSection) {
         self.appModel = appModel
         _selection = State(initialValue: appModel.selectedDeviceId.map { SidebarItem(deviceId: $0, section: initialSection) })
+    }
+
+    /// Phone notifications and unread texts, across connected devices.
+    private var dockBadgeCount: Int {
+        appModel.connectedDevices.reduce(0) { total, device in
+            total + device.notifications.count + device.smsThreads.reduce(0) { $0 + $1.unreadCount }
+        }
     }
 
     public var body: some View {
@@ -144,6 +158,7 @@ public struct MainWindowView: View {
             DockPresence.windowOpened()
         }
         .onDisappear { DockPresence.windowClosed() }
+        .onChange(of: dockBadgeCount, initial: true) { DockPresence.setBadge(dockBadgeCount) }
         .onChange(of: appModel.sectionRequest) { applySectionRequest() }
         .onChange(of: selection) {
             if let id = selection?.deviceId, id != appModel.selectedDeviceId {
@@ -381,7 +396,8 @@ struct TetherCommands: Commands {
             Button("Check for Updates…") { UpdateController.shared.checkForUpdates() }
         }
 
-        CommandGroup(after: .newItem) {
+        // In the Tether menu, not a File menu: Tether has no documents.
+        CommandGroup(after: .appSettings) {
             Button("Connect by Address…") {
                 openWindow(id: "main")
                 appModel.isShowingConnectByIP = true
@@ -391,6 +407,14 @@ struct TetherCommands: Commands {
             Button("Look for Devices") { appModel.refreshDiscovery() }
                 .keyboardShortcut("r")
         }
+
+        // No File or View menu. Emptying their groups removes them.
+        CommandGroup(replacing: .newItem) {}
+        CommandGroup(replacing: .saveItem) {}
+        CommandGroup(replacing: .importExport) {}
+        CommandGroup(replacing: .printItem) {}
+        CommandGroup(replacing: .sidebar) {}
+        CommandGroup(replacing: .toolbar) {}
 
         CommandMenu("Device") {
             let device = appModel.primaryDevice

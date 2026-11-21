@@ -84,6 +84,7 @@ struct OverviewPane: View {
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
         .noTopScrollEdge()
+        .readableCardList()
     }
 
     /// Rows' own side inset, on top of the list's. None, so every card on
@@ -342,7 +343,9 @@ private struct NotificationPreviewRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .center, spacing: 6) {
-                NotificationAppIcon(appName: item.appName, glyph: device.glyph(for: item), size: 18)
+                NotificationAppIcon(appName: item.appName,
+                                    glyph: item.isFromSystem && item.imageIsGlyph ? item.imageData : device.glyph(for: item),
+                                    size: 18)
                 Text(item.appName)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)

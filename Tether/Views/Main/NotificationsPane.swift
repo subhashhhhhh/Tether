@@ -8,11 +8,10 @@ import SwiftUI
 struct NotificationsPane: View {
     let device: DeviceViewModel
     @State private var isConfirmingDismissAll = false
-    /// The list fills the window, so it scrolls anywhere in it and its
-    /// scroll bar is at the edge. Rows have no insets of their own: the inset
-    /// list style already keeps each row in from the sides, so a row is
-    /// exactly its card, and a swipe uncovers Dismiss right at the card's
-    /// edge. (`contentMargins` would move the margin, but List ignores it.)
+    /// Rows have no insets of their own: the inset list style already keeps
+    /// each row in from the sides, so a row is exactly its card, and a swipe
+    /// uncovers Dismiss right at the card's edge. (`contentMargins` would
+    /// move the margin, but List ignores it.)
     static let rowInsets = EdgeInsets()
 
     /// Notifications grouped by app, the app with the newest one first.
@@ -40,10 +39,11 @@ struct NotificationsPane: View {
                     HStack(spacing: 8) {
                         NotificationAppIcon(appName: group.app, glyph: group.items.first.flatMap(device.glyph(for:)), size: 24)
                         Text(group.app)
-                            .font(.title3.weight(.semibold))
-                        Spacer()
+                            .font(.title2.weight(.semibold))
                         Text(group.items.count, format: .number)
+                            .font(.title3)
                             .foregroundStyle(.secondary)
+                        Spacer()
                     }
                     .padding(.horizontal, 4)
                     .padding(.top, 20)
@@ -79,6 +79,7 @@ struct NotificationsPane: View {
             .listStyle(.inset)
             .scrollContentBackground(.hidden)
             .noTopScrollEdge()
+            .readableCardList()
             .animation(.default, value: device.notifications)
             // It clears the phone's notification shade too, so it asks first.
             .confirmationDialog("Dismiss all notifications on \(device.name)?", isPresented: $isConfirmingDismissAll) {
@@ -139,6 +140,9 @@ private struct NotificationRow: View {
                         .frame(width: 28, height: 28)
                         .clipShape(.circle)
                         .accessibilityHidden(true)
+                } else if notification.isFromSystem, notification.imageIsGlyph {
+                    // Android's own icon for this notification: battery, Wi-Fi.
+                    NotificationAppIcon(appName: notification.appName, glyph: notification.imageData, size: 28)
                 }
                 Text(notification.title.isEmpty ? notification.appName : notification.title)
                     .fontWeight(.semibold)
@@ -298,23 +302,20 @@ struct NotificationAppIcon: View {
         return image
     }
 
+    /// Nothing until the phone has sent the app's glyph: the name beside it
+    /// already says which app it is.
     var body: some View {
-        Group {
-            if let glyph, let image = Self.image(glyph) {
-                Image(nsImage: image)
-                    .renderingMode(.template)
-                    .resizable()
-                    .scaledToFit()
-                    .padding(size * 0.2)
-            } else {
-                Text(appName.prefix(1).uppercased())
-                    .font(.system(size: size * 0.52, weight: .semibold, design: .rounded))
-            }
+        if let glyph, let image = Self.image(glyph) {
+            Image(nsImage: image)
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .padding(size * 0.2)
+                .foregroundStyle(.secondary)
+                .frame(width: size, height: size)
+                .background(.quaternary, in: .rect(cornerRadius: size * 0.26, style: .continuous))
+                .accessibilityHidden(true)
         }
-        .foregroundStyle(.secondary)
-        .frame(width: size, height: size)
-        .background(.quaternary, in: .rect(cornerRadius: size * 0.26, style: .continuous))
-        .accessibilityHidden(true)
     }
 }
 

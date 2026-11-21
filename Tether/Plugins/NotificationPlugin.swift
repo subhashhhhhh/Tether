@@ -44,6 +44,14 @@ public struct PhoneNotification: Identifiable, Hashable, Sendable {
     /// the same name don't share one, else its name.
     public var glyphKey: String { packageName ?? appName }
 
+    /// From Android itself, which uses a different icon for each kind of
+    /// notification (battery, Wi-Fi, USB), so its icon belongs to the
+    /// notification, not to an app.
+    public var isFromSystem: Bool {
+        if let packageName { return packageName == "android" || packageName == "com.android.systemui" }
+        return appName == "Android System" || appName == "System UI"
+    }
+
     /// Which chat or thread it belongs to, for grouping banners.
     public var threadKey: String { "\(glyphKey)|\(groupName ?? title)" }
     /// A one-time verification code found in the title or text.
@@ -352,7 +360,8 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
 
     private func rememberGlyph(of item: PhoneNotification) {
         loadGlyphsIfNeeded(for: item.deviceId)
-        guard item.imageIsGlyph, let glyph = item.imageData, appGlyphs[item.deviceId]?[item.glyphKey] != glyph else { return }
+        guard item.imageIsGlyph, !item.isFromSystem, let glyph = item.imageData,
+              appGlyphs[item.deviceId]?[item.glyphKey] != glyph else { return }
         appGlyphs[item.deviceId, default: [:]][item.glyphKey] = glyph
         guard let url = Self.glyphFile(for: item.deviceId), let glyphs = appGlyphs[item.deviceId] else { return }
         Self.glyphQueue.async {

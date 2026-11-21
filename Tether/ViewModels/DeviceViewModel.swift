@@ -259,7 +259,9 @@ public final class DeviceViewModel: Identifiable, Hashable {
     /// The app's glyph for a notification: by package, else by the app
     /// name it was saved under before.
     public func glyph(for notification: PhoneNotification) -> Data? {
-        appGlyphs[notification.glyphKey] ?? appGlyphs[notification.appName]
+        // Android's own icons differ per notification; there's no app icon.
+        guard !notification.isFromSystem else { return nil }
+        return appGlyphs[notification.glyphKey] ?? appGlyphs[notification.appName]
     }
 
     public func perform(_ action: String, on notification: PhoneNotification) { onNotificationAction?(notification, action) }

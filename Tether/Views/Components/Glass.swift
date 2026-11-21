@@ -196,6 +196,20 @@ struct HoverBlurBar<Content: View>: View {
     }
 }
 
+extension View {
+    /// A list of cards kept to a readable width in a wide window. A list
+    /// draws a row's swipe buttons at the row's edge, so the list itself is
+    /// narrowed, which keeps Dismiss right behind a card. A swiped card can
+    /// still slide past the list's edge, and the list's own scroll bar,
+    /// which would sit mid-window, is hidden.
+    func readableCardList(maxWidth: CGFloat = 760) -> some View {
+        scrollClipDisabled()
+            .scrollIndicators(.hidden)
+            .frame(maxWidth: maxWidth)
+            .frame(maxWidth: .infinity)
+    }
+}
+
 /// Glass controls that sit together share one container, so they render as
 /// a set and can blend into each other.
 struct GlassGroup<Content: View>: View {
