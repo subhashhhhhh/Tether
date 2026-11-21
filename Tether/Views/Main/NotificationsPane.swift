@@ -82,9 +82,12 @@ private struct NotificationRow: View {
                         .clipShape(.rect(cornerRadius: 6))
                         .accessibilityLabel("Image from \(notification.appName)")
                 } else {
-                    Image(systemName: "app.dashed")
+                    // The phone sent no picture. An initial reads better than a blank.
+                    Text(notification.appName.prefix(1).uppercased())
+                        .font(.headline)
                         .foregroundStyle(.secondary)
                         .frame(width: 32, height: 32)
+                        .background(.quaternary, in: .rect(cornerRadius: 8, style: .continuous))
                         .accessibilityHidden(true)
                 }
                 Text(notification.title.isEmpty ? notification.appName : notification.title)
@@ -117,7 +120,7 @@ private struct NotificationRow: View {
                 .padding(.top, 6)
                 .onAppear { isReplyFocused = true }
             } else if notification.code != nil || notification.replyId != nil || notification.isDismissable {
-                HStack(spacing: 16) {
+                HStack(spacing: 8) {
                     if let code = notification.code {
                         CopyCodeButton(code: code)
                     }
@@ -128,9 +131,8 @@ private struct NotificationRow: View {
                         Button("Dismiss") { device.dismiss(notification) }
                     }
                 }
-                .buttonStyle(.link)
-                .font(.callout)
-                .padding(.top, 4)
+                .controlSize(.small)
+                .padding(.top, 6)
             }
         }
         .padding(.horizontal, 16)
@@ -177,7 +179,7 @@ struct CopyCodeButton: View {
                 copied = false
             }
         } label: {
-            Text(copied ? "Copied" : "Copy Code \(code)")
+            Label(copied ? "Copied" : "Copy Code \(code)", systemImage: copied ? "checkmark" : "doc.on.doc")
                 .monospacedDigit()
         }
         .accessibilityLabel(copied ? "Copied" : "Copy code \(code.map(String.init).joined(separator: " "))")

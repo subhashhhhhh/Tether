@@ -39,6 +39,13 @@ import ScreenCaptureKit
                              titled: false, to: dir.appendingPathComponent("menubar-\(suffix).png"))
         }
 
+        UserDefaults.standard.set("mock_phone", forKey: "tether_folded_devices")
+        let folded = TetherAppModel.mock()
+        folded.selectedDeviceId = "mock_tablet"
+        try await render(MainWindowView(appModel: folded, initialSection: .notifications), size: windowSize, dark: true,
+                         to: dir.appendingPathComponent("main-folded-dark.png"))
+        UserDefaults.standard.removeObject(forKey: "tether_folded_devices")
+
         try await render(MainWindowView(appModel: .mockEmpty()), size: windowSize, dark: false,
                          to: dir.appendingPathComponent("main-onboarding-light.png"))
 

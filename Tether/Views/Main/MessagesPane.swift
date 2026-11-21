@@ -74,6 +74,8 @@ struct MessagesPane: View {
                 device.openThread(selectedThreadId)
             }
             .onChange(of: device.smsThreads) { selectPendingThread() }
+            .onChange(of: device.composeRequests) { startComposing() }
+            .searchable(text: $searchText, placement: .toolbar, prompt: "Search")
         }
     }
 
@@ -100,33 +102,6 @@ struct MessagesPane: View {
 
     private var threadList: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 4) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                TextField("Search", text: $searchText)
-                    .textFieldStyle(.plain)
-                if !searchText.isEmpty {
-                    Button("Clear", systemImage: "xmark.circle.fill") { searchText = "" }
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .glassCapsule()
-            .padding([.vertical, .leading], 10)
-
-            Button("New Message", systemImage: "square.and.pencil", action: startComposing)
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
-                .font(.title3)
-                .padding(.trailing, 10)
-                .help("New Message")
-                .keyboardShortcut("n", modifiers: .command)
-            }
-
             List(selection: $selectedThreadId) {
                 if isComposing {
                     HStack(spacing: 10) {
@@ -198,15 +173,15 @@ private struct ConversationView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                InitialsAvatar(name: device.title(for: thread), size: 28, photo: device.photo(for: thread))
+            VStack(spacing: 4) {
+                InitialsAvatar(name: device.title(for: thread), size: 36, photo: device.photo(for: thread))
                 Text(device.title(for: thread))
-                    .font(.headline)
+                    .font(.callout.weight(.medium))
                     .lineLimit(1)
-                Spacer()
             }
+            .frame(maxWidth: .infinity)
             .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(.vertical, 8)
 
             Divider()
 

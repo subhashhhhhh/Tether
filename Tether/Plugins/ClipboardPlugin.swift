@@ -4,9 +4,14 @@
 //
 
 import AppKit
+import Combine
 import Foundation
 
-public final class ClipboardPlugin: TetherPlugin, @unchecked Sendable {
+public final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked Sendable {
+    /// The last few things each device sent, newest first. Kept in memory only.
+    @Published public private(set) var received: [String: [String]] = [:]
+    static let receivedLimit = 3
+
     public let supportedPacketTypes = [
         "kdeconnect.clipboard",
         "kdeconnect.clipboard.connect"
@@ -110,8 +115,21 @@ public final class ClipboardPlugin: TetherPlugin, @unchecked Sendable {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(content, forType: .string)
             self.lastChangeCount = NSPasteboard.general.changeCount
+            var history = self.received[deviceId] ?? []
+            history.removeAll { $0 == content }
+            history.insert(content, at: 0)
+            self.received[deviceId] = Array(history.prefix(Self.receivedLimit))
             TetherLog("[ClipboardPlugin] Synced clipboard from \(connection.peerDeviceInfo?.deviceName ?? "Device"): \(content.prefix(30))...")
         }
+    }
+
+    /// Puts something a device sent earlier back on this Mac's clipboard,
+    /// without sending it to the devices again.
+    public func copyReceived(_ content: String) {
+        lastSentContent = content
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(content, forType: .string)
+        lastChangeCount = NSPasteboard.general.changeCount
     }
 
     public func broadcastClipboard(content: String) {

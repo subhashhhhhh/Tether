@@ -48,6 +48,10 @@ public final class DeviceViewModel: Identifiable, Hashable {
     var contacts = ContactBook()
     public var commands: [RemoteCommand]
     public var notifications: [PhoneNotification]
+    /// The last few things the device sent to this Mac's clipboard, newest first.
+    public var receivedClipboard: [String] = []
+    /// Bumped by the toolbar's New Message button; the Messages pane starts a draft.
+    public var composeRequests = 0
 
     /// True between asking a nearby device to pair and it answering.
     public var isAwaitingPairing = false
@@ -63,6 +67,7 @@ public final class DeviceViewModel: Identifiable, Hashable {
     // Action handlers injected by TetherAppModel or mocked
     public var onPing: (() -> Void)?
     public var onSendClipboard: (() -> Void)?
+    public var onCopyReceivedClipboard: ((String) -> Void)?
     public var onSendFiles: (([URL]) -> Void)?
     public var onFindPhone: (() -> Void)?
     public var onLockDevice: (() -> Void)?
@@ -166,6 +171,7 @@ public final class DeviceViewModel: Identifiable, Hashable {
     // Actions
     public func ping() { onPing?() }
     public func sendClipboard() { onSendClipboard?() }
+    public func copyReceivedClipboard(_ text: String) { onCopyReceivedClipboard?(text) }
     public func sendFiles(_ urls: [URL]) { onSendFiles?(urls) }
     public func findMyPhone() { onFindPhone?() }
     public func lockDevice() { onLockDevice?() }
@@ -265,6 +271,7 @@ extension DeviceViewModel {
         )
         phone.canSetVolume = true
         phone.sims = [PhoneSIM(id: 1, number: 1, networkType: "5G"), PhoneSIM(id: 2, number: 2, networkType: "4G")]
+        phone.receivedClipboard = ["Gate B14, boarding 18:40", "https://maps.example.com/trailhead"]
         return phone
     }
 

@@ -121,7 +121,8 @@ public final class TetherAppModel {
             service.mediaControlPlugin.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
             service.remoteVolumePlugin.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
             service.notificationPlugin.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
-            service.contactsPlugin.objectWillChange.map { _ in () }.eraseToAnyPublisher()
+            service.contactsPlugin.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
+            service.clipboardPlugin.objectWillChange.map { _ in () }.eraseToAnyPublisher()
         ]
         // objectWillChange fires before the value lands; hop a runloop turn and
         // coalesce bursts (a single SMS sync can publish hundreds of times).
@@ -227,6 +228,7 @@ public final class TetherAppModel {
                 service.clipboardPlugin.broadcastClipboard(content: text)
             }
         }
+        vm.onCopyReceivedClipboard = { service.clipboardPlugin.copyReceived($0) }
         vm.onSendFiles = { urls in service.sendFiles(urls, to: deviceId) }
         vm.onFindPhone = { service.ringPhone(deviceId) }
         vm.onLockDevice = { service.lockPhone(deviceId) }
@@ -306,6 +308,7 @@ public final class TetherAppModel {
             update(dev, \.contacts, service.contactsPlugin.books[id] ?? ContactBook())
             update(dev, \.commands, service.runCommandPlugin.commands)
             update(dev, \.notifications, service.notificationPlugin.notifications[id] ?? [])
+            update(dev, \.receivedClipboard, service.clipboardPlugin.received[id] ?? [])
 
             let nowPlaying = service.mediaControlPlugin.nowPlaying[id]
             update(dev, \.nowPlayingTitle, nowPlaying?.title)

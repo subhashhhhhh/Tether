@@ -36,11 +36,11 @@ struct OverviewPane: View {
                     .foregroundStyle(.tint)
                     .frame(width: 40, height: 56)
                     .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(device.name)
                         .font(.largeTitle.weight(.bold))
                         .lineLimit(2)
-                    HStack(spacing: 8) {
+                    HStack(spacing: 14) {
                         StatusPill(
                             text: device.isViaTailscale ? "Tailscale" : "Wi-Fi",
                             systemImage: device.isViaTailscale ? "point.3.connected.trianglepath.dotted" : "wifi"
@@ -53,18 +53,23 @@ struct OverviewPane: View {
                             StatusPill(text: network, systemImage: "cellularbars", tint: .secondary)
                         }
                     }
+                    .accessibilityElement(children: .combine)
                 }
             }
 
-            HStack(spacing: 22) {
-                GlassCircleButton(title: "Find", systemImage: "speaker.wave.3.fill") { device.findMyPhone() }
-                GlassCircleButton(title: "Clipboard", systemImage: "doc.on.clipboard") { device.sendClipboard() }
-                GlassCircleButton(title: "Send Files", systemImage: "arrow.up.doc") {
-                    device.sendFiles(FilePicker.chooseFiles(sendingTo: device.name))
+            GlassGroup(spacing: 10) {
+                HStack(spacing: 10) {
+                    Button("Find Phone", systemImage: "speaker.wave.3") { device.findMyPhone() }
+                        .help("Ring \(device.name) at full volume")
+                    ClipboardMenu(device: device)
+                    if device.canLock {
+                        Button("Lock", systemImage: "lock") { device.lockDevice() }
+                            .help("Lock \(device.name)")
+                    }
                 }
-                if device.canLock {
-                    GlassCircleButton(title: "Lock", systemImage: "lock.fill") { device.lockDevice() }
-                }
+                .glassButton()
+                .buttonBorderShape(.capsule)
+                .controlSize(.large)
             }
         }
     }
@@ -93,7 +98,7 @@ struct OverviewPane: View {
                             NotificationPreviewRow(item: item)
                         }
                     }
-                    .glassPanel()
+                    .contentCard()
                 }
             }
 
@@ -104,28 +109,80 @@ struct OverviewPane: View {
                             .buttonStyle(.link)
                     }
                 }
-                Group {
-                    if device.transfers.isEmpty {
-                        Label("Drop files anywhere in this window to send them to \(device.name). Files it sends you are saved in Downloads.", systemImage: "arrow.down.doc")
+                VStack(spacing: 0) {
+                    // Sending lives with the transfers it produces.
+                    HStack(spacing: 12) {
+                        Image(systemName: "arrow.up.doc")
+                            .font(.title3)
                             .foregroundStyle(.secondary)
-                            .padding(16)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        VStack(spacing: 0) {
-                            ForEach(Array(device.transfers.prefix(3).enumerated()), id: \.element.id) { index, item in
-                                if index > 0 { Divider().padding(.leading, 16) }
-                                TransferRow(item: item)
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 8)
-                            }
+                            .frame(width: 28)
+                            .accessibilityHidden(true)
+                        Text("Drop files anywhere in this window to send them to \(device.name).")
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        Button("Choose Files…") {
+                            device.sendFiles(FilePicker.chooseFiles(sendingTo: device.name))
                         }
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+
+                    ForEach(device.transfers.prefix(3)) { item in
+                        Divider().padding(.leading, 16)
+                        TransferRow(item: item)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 8)
+                    }
                 }
-                .glassPanel()
+                .contentCard()
+
+                Text("Files from \(device.name) are saved in Downloads.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 4)
             }
 
             RemoteInputRow()
         }
+    }
+}
+
+// MARK: - Clipboard
+
+/// Sends this Mac's clipboard with a click. The arrow lists what the device
+/// sent lately, to put back on the clipboard.
+private struct ClipboardMenu: View {
+    let device: DeviceViewModel
+
+    var body: some View {
+        Menu {
+            Section("Sent by \(device.name)") {
+                if device.receivedClipboard.isEmpty {
+                    // Android only lets an app read the clipboard when asked to.
+                    Text("Nothing yet. Tap Send Clipboard in KDE Connect on \(device.name).")
+                } else {
+                    ForEach(Array(device.receivedClipboard.enumerated()), id: \.offset) { _, text in
+                        Button(Self.preview(of: text), systemImage: "doc.on.doc") {
+                            device.copyReceivedClipboard(text)
+                        }
+                    }
+                }
+            }
+        } label: {
+            Label("Send Clipboard", systemImage: "doc.on.clipboard")
+        } primaryAction: {
+            device.sendClipboard()
+        }
+        .menuStyle(.button)
+        .fixedSize()
+        .help("Send this Mac's clipboard to \(device.name). The arrow lists what \(device.name) sent.")
+    }
+
+    static func preview(of text: String) -> String {
+        let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        return trimmed.count > 48 ? String(trimmed.prefix(48)) + "…" : trimmed
     }
 }
 
@@ -182,7 +239,7 @@ private struct NowPlayingPanel: View {
                 .help(device.canSetVolume ? "Media volume on \(device.name)" : "Start playing something on \(device.name) to change its volume")
             }
             .padding(16)
-            .glassPanel()
+            .contentCard()
         }
         .onAppear { draftVolume = device.volume }
         .onChange(of: device.volume) {
@@ -242,8 +299,8 @@ private struct NotificationPreviewRow: View {
             }
             if let code = item.code {
                 CopyCodeButton(code: code)
-                    .buttonStyle(.link)
-                    .padding(.top, 2)
+                    .controlSize(.small)
+                    .padding(.top, 4)
             }
         }
         .padding(.horizontal, 16)
@@ -280,7 +337,7 @@ private struct RemoteInputRow: View {
                     Button("Allow…") { InputSynthesizer.shared.openAccessibilitySettings() }
                 }
                 .padding(16)
-                .glassPanel()
+                .contentCard()
             }
         }
         // Re-check when the window regains focus, e.g. after visiting System Settings.

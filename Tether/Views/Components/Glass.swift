@@ -4,8 +4,8 @@
 //
 //  Tether's surface language: Liquid Glass on macOS 26, the system's
 //  translucent materials on macOS 15, same shapes and spacing on both.
-//  Glass is used for things that float over content (panels, round buttons,
-//  status pills), never as a fill for whole screens.
+//  Glass is for things that float over content: the popover's panels, the
+//  call card, buttons. Content in the main window sits on plain cards.
 //
 
 import SwiftUI
@@ -26,6 +26,12 @@ extension View {
                 .background(.regularMaterial, in: .rect(cornerRadius: radius, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: radius, style: .continuous).strokeBorder(.separator.opacity(0.6), lineWidth: 0.5))
         }
+    }
+
+    /// A card in the content layer. Liquid Glass belongs to controls and
+    /// navigation, so content gets a quiet fill instead, like a grouped form.
+    func contentCard(radius: CGFloat = 16) -> some View {
+        background(Color(nsColor: .quaternarySystemFill), in: .rect(cornerRadius: radius, style: .continuous))
     }
 
     /// A text field's capsule: glass on macOS 26, a soft fill before.
@@ -112,7 +118,23 @@ struct GlassCircleButton: View {
     }
 }
 
-/// A small capsule saying how a device is connected.
+/// Glass controls that sit together share one container, so they render as
+/// a set and can blend into each other.
+struct GlassGroup<Content: View>: View {
+    var spacing: CGFloat = 10
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        if #available(macOS 26.0, *) {
+            GlassEffectContainer(spacing: spacing) { content }
+        } else {
+            content
+        }
+    }
+}
+
+/// How a device is doing: its connection, battery or network. It's
+/// information, not a control, so it's plain text with no capsule behind it.
 struct StatusPill: View {
     let text: String
     let systemImage: String
@@ -121,19 +143,17 @@ struct StatusPill: View {
     var body: some View {
         Label {
             Text(text)
+                .foregroundStyle(.secondary)
         } icon: {
             Image(systemName: systemImage)
                 .foregroundStyle(tint)
                 .contentTransition(.symbolEffect(.replace))
         }
-        .font(.callout.weight(.medium))
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .glassPanel(radius: 100)
+        .font(.callout)
     }
 }
 
-/// A section heading over a glass panel.
+/// A section heading over a card.
 struct PanelHeader<Trailing: View>: View {
     let title: String
     @ViewBuilder var trailing: Trailing
@@ -197,7 +217,7 @@ struct GlassPage<Trailing: View, Content: View>: View {
     }
 }
 
-/// A titled glass panel, with an optional note under it.
+/// A titled card, with an optional note under it.
 struct GlassSection<Trailing: View, Content: View>: View {
     let title: String
     var footer: String?
@@ -217,7 +237,7 @@ struct GlassSection<Trailing: View, Content: View>: View {
         VStack(alignment: .leading, spacing: 10) {
             PanelHeader(title) { trailing }
             VStack(spacing: 0) { content }
-                .glassPanel()
+                .contentCard()
             if let footer {
                 Text(footer)
                     .font(.callout)

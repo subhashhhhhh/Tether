@@ -29,38 +29,8 @@ struct DeviceDetailView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .navigationTitle(device.name)
-        .toolbar {
-            if device.isConnected {
-                ToolbarItem(placement: .principal) {
-                    Picker("Section", selection: Binding(get: { section }, set: onSelectSection)) {
-                        ForEach(DeviceSection.allCases) { section in
-                            Text(section.title).tag(section)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
-                }
-            }
-            // The overview has these on the phone card.
-            if device.isConnected, section != .overview {
-                ToolbarItemGroup(placement: .primaryAction) {
-                    Button("Find Phone", systemImage: "speaker.wave.3") { device.findMyPhone() }
-                        .help("Ring \(device.name) at full volume")
-                    if device.canLock {
-                        Button("Lock", systemImage: "lock") { device.lockDevice() }
-                            .help("Lock \(device.name)")
-                    }
-                    Button("Send Clipboard", systemImage: "doc.on.clipboard") { device.sendClipboard() }
-                        .help("Send this Mac's clipboard to \(device.name)")
-                    Button("Send Files", systemImage: "square.and.arrow.up") {
-                        device.sendFiles(FilePicker.chooseFiles(sendingTo: device.name))
-                    }
-                    .help("Send files to \(device.name)")
-                }
-            }
-        }
+        .navigationTitle(device.isConnected ? section.title : device.name)
+        .navigationSubtitle(device.isConnected ? device.name : "")
     }
 
     private var connectedContent: some View {
