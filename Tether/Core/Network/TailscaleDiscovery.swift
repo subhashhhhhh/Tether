@@ -29,6 +29,14 @@ struct TailscalePeer: Sendable, Equatable, Identifiable {
 }
 
 nonisolated enum TailscaleDiscovery {
+    /// Whether an address is on a tailnet: 100.64.0.0/10, or Tailscale's
+    /// IPv6 range fd7a:115c:a1e0::/48.
+    static func isTailscaleAddress(_ host: String) -> Bool {
+        if host.lowercased().hasPrefix("fd7a:115c:a1e0:") { return true }
+        let octets = host.split(separator: ".").compactMap { Int($0) }
+        return octets.count == 4 && octets[0] == 100 && (64...127).contains(octets[1])
+    }
+
     /// Settings › General › "Find devices over Tailscale". On unless turned off.
     static let enabledKey = "tether_tailscale_discovery"
 
@@ -85,7 +93,7 @@ nonisolated enum TailscaleDiscovery {
         return .running(selfIP: selfIP, phones: phones)
     }
 
-    /// Tether's sockets are IPv4; Tailscale gives every device a stable 100.x address.
+    /// Discovery announces over IPv4; Tailscale gives every device a stable 100.x address.
     private static func firstIPv4(_ value: Any?) -> String? {
         (value as? [String])?.first { !$0.contains(":") }
     }

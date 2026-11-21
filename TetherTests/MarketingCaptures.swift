@@ -55,7 +55,7 @@ import AppKit
         window.styleMask = style
         window.isReleasedWhenClosed = false
         window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
-        window.backgroundColor = titled ? .windowBackgroundColor : .windowBackgroundColor
+        window.backgroundColor = .windowBackgroundColor
         window.title = "Tether"
         if let size { window.setContentSize(size) }
         window.center()
@@ -72,17 +72,7 @@ import AppKit
         try await Task.sleep(for: .milliseconds(300))
 
         guard let frameView = window.contentView?.superview ?? window.contentView else { return }
-        frameView.layoutSubtreeIfNeeded()
-        let bounds = frameView.bounds
-        guard let rep = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: Int(bounds.width * scale), pixelsHigh: Int(bounds.height * scale),
-            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
-        ) else { return }
-        rep.size = bounds.size
-        frameView.cacheDisplay(in: bounds, to: rep)
-        try rep.representation(using: .png, properties: [:])?.write(to: url)
+        try SnapshotDrawing.write(frameView, scale: scale, to: url)
     }
 
     private static func flattenMaterials(in view: NSView) {

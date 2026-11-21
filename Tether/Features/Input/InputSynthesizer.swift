@@ -152,49 +152,51 @@ nonisolated final class InputSynthesizer: @unchecked Sendable {
                 lock.withLock { lastScrollAt = Date() }
                 scroller.scroll(vertical: dy, horizontal: -dx)
             } else if !key.isEmpty || validSpecialKey {
-                let ctrl = packet.bool(for: "ctrl") ?? false
-                let alt = packet.bool(for: "alt") ?? false
-                let shift = packet.bool(for: "shift") ?? false
-                let superKey = packet.bool(for: "super") ?? false
-
-                // Press modifiers
-                if ctrl { postKeyEvent(keyCode: CGKeyCode(kVK_Control), isDown: true) }
-                if alt { postKeyEvent(keyCode: CGKeyCode(kVK_Option), isDown: true) }
-                if shift { postKeyEvent(keyCode: CGKeyCode(kVK_Shift), isDown: true) }
-                if superKey { postKeyEvent(keyCode: CGKeyCode(kVK_Command), isDown: true) }
-
-                if validSpecialKey {
-                    let code = Self.specialKeysMap[specialKey]
-                    postKeyEvent(keyCode: code, isDown: true)
-                    postKeyEvent(keyCode: code, isDown: false)
-                } else {
-                    for char in key.utf16 {
-                        var unichar = char
-                        if let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true) {
-                            event.keyboardSetUnicodeString(stringLength: 1, unicodeString: &unichar)
-                            event.post(tap: .cgSessionEventTap)
-                        }
-                    }
-                }
-
-                // Release modifiers in reverse order
-                if superKey { postKeyEvent(keyCode: CGKeyCode(kVK_Command), isDown: false) }
-                if shift { postKeyEvent(keyCode: CGKeyCode(kVK_Shift), isDown: false) }
-                if alt { postKeyEvent(keyCode: CGKeyCode(kVK_Option), isDown: false) }
-                if ctrl { postKeyEvent(keyCode: CGKeyCode(kVK_Control), isDown: false) }
+                typeKeys(key, specialKey: validSpecialKey ? specialKey : nil, packet: packet)
             }
-        } else {
-            // Mouse move / drag event
-            if dx != 0 || dy != 0 {
-                let current = currentMousePosition()
-                let target = CGPoint(x: current.x + CGFloat(dx), y: current.y + CGFloat(dy))
-                setMousePosition(target)
-            } else if let x = x, let y = y {
-                setMousePosition(CGPoint(x: CGFloat(x), y: CGFloat(y)))
-            }
+        } else if dx != 0 || dy != 0 {
+            let current = currentMousePosition()
+            setMousePosition(CGPoint(x: current.x + CGFloat(dx), y: current.y + CGFloat(dy)))
+        } else if let x, let y {
+            setMousePosition(CGPoint(x: CGFloat(x), y: CGFloat(y)))
         }
 
         return true
+    }
+
+
+    /// Types text or a special key, holding the packet's modifiers around it.
+    private func typeKeys(_ key: String, specialKey: Int?, packet: NetworkPacket) {
+        let ctrl = packet.bool(for: "ctrl") ?? false
+        let alt = packet.bool(for: "alt") ?? false
+        let shift = packet.bool(for: "shift") ?? false
+        let superKey = packet.bool(for: "super") ?? false
+
+        // Press modifiers
+        if ctrl { postKeyEvent(keyCode: CGKeyCode(kVK_Control), isDown: true) }
+        if alt { postKeyEvent(keyCode: CGKeyCode(kVK_Option), isDown: true) }
+        if shift { postKeyEvent(keyCode: CGKeyCode(kVK_Shift), isDown: true) }
+        if superKey { postKeyEvent(keyCode: CGKeyCode(kVK_Command), isDown: true) }
+
+        if let specialKey {
+            let code = Self.specialKeysMap[specialKey]
+            postKeyEvent(keyCode: code, isDown: true)
+            postKeyEvent(keyCode: code, isDown: false)
+        } else {
+            for char in key.utf16 {
+                var unichar = char
+                if let event = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true) {
+                    event.keyboardSetUnicodeString(stringLength: 1, unicodeString: &unichar)
+                    event.post(tap: .cgSessionEventTap)
+                }
+            }
+        }
+
+        // Release modifiers in reverse order
+        if superKey { postKeyEvent(keyCode: CGKeyCode(kVK_Command), isDown: false) }
+        if shift { postKeyEvent(keyCode: CGKeyCode(kVK_Shift), isDown: false) }
+        if alt { postKeyEvent(keyCode: CGKeyCode(kVK_Option), isDown: false) }
+        if ctrl { postKeyEvent(keyCode: CGKeyCode(kVK_Control), isDown: false) }
     }
 
     // MARK: - Event Helpers

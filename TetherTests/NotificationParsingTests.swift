@@ -132,3 +132,31 @@ struct SocketAddressTests {
         }
     }
 }
+
+struct NotificationPacketTests {
+    @Test func readsAChatNotification() {
+        let packet = NetworkPacket(type: PacketType.notification, body: [
+            "id": "0|com.whatsapp|1|tag|10123", "appName": "WhatsApp", "title": "Family", "text": "ignored",
+            "time": "1700000000000", "groupName": "Family", "requestReplyId": "r1",
+            "conversation": [["sender": "Mum", "content": "Dinner?"], ["sender": "Dad", "content": "Yes"]],
+            "actions": ["Mark as read", " "],
+        ])
+        let item = NotificationPlugin.notification(from: packet, id: "0|com.whatsapp|1|tag|10123", deviceId: "d", image: nil)
+        #expect(item.title == "Family")
+        #expect(item.text == "Mum: Dinner?\nDad: Yes")
+        #expect(item.replyId == "r1")
+        #expect(item.actions == ["Mark as read"])
+        #expect(item.date == Date(timeIntervalSince1970: 1_700_000_000))
+        #expect(item.packageName == "com.whatsapp")
+    }
+
+    @Test func findsACodeOnlyInAButtonWhenTheTextIsHidden() {
+        let packet = NetworkPacket(type: PacketType.notification, body: [
+            "id": "k", "appName": "Messages", "title": "Bank", "text": "Sensitive notification content hidden",
+            "actions": ["Copy 445566"],
+        ])
+        let item = NotificationPlugin.notification(from: packet, id: "k", deviceId: "d", image: nil)
+        #expect(item.isRedacted)
+        #expect(item.code == "445566")
+    }
+}

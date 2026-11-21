@@ -245,42 +245,40 @@ final class TetherAppModel {
         vm.onLockDevice = { service.lockPhone(deviceId) }
         let canLock = connection.peerDeviceInfo?.incomingCapabilities.contains(PacketType.lockRequest) ?? false
         if vm.canLock != canLock { vm.canLock = canLock }
-        // Tailscale addresses are in 100.64.0.0/10.
-        let octets = connection.host.split(separator: ".").compactMap { Int($0) }
-        let viaTailscale = octets.count == 4 && octets[0] == 100 && (64...127).contains(octets[1])
+        let viaTailscale = TailscaleDiscovery.isTailscaleAddress(connection.host)
         if vm.isViaTailscale != viaTailscale { vm.isViaTailscale = viaTailscale }
         vm.onUnpair = { service.unpair(deviceId: deviceId) }
         vm.onExecuteCommand = { cmdId in
-            service.runCommandPlugin.startCommand(key: cmdId, connection: service.connectedDevices[deviceId])
+            service.runCommandPlugin.startCommand(key: cmdId, connection: service.connection(for: deviceId))
         }
         vm.onSaveCommand = { command in
             let plugin = service.runCommandPlugin
             if plugin.commands.contains(where: { $0.id == command.id }) {
-                plugin.updateCommand(command, connection: service.connectedDevices[deviceId])
+                plugin.updateCommand(command, connection: service.connection(for: deviceId))
             } else {
-                plugin.addCommand(command, connection: service.connectedDevices[deviceId])
+                plugin.addCommand(command, connection: service.connection(for: deviceId))
             }
         }
         vm.onDeleteCommand = { cmdId in
-            service.runCommandPlugin.removeCommand(id: cmdId, connection: service.connectedDevices[deviceId])
+            service.runCommandPlugin.removeCommand(id: cmdId, connection: service.connection(for: deviceId))
         }
         vm.onSendSMS = { addresses, text, threadId, subId in
-            guard let conn = service.connectedDevices[deviceId] else { return }
+            guard let conn = service.connection(for: deviceId) else { return }
             service.smsPlugin.sendSMS(text: text, to: addresses, threadId: threadId, subId: subId, connection: conn)
         }
         vm.onRefreshMessages = {
-            guard let conn = service.connectedDevices[deviceId] else { return }
+            guard let conn = service.connection(for: deviceId) else { return }
             service.smsPlugin.requestAllConversations(connection: conn)
         }
         vm.onOpenAttachment = { attachment in
-            service.smsPlugin.openAttachment(attachment, connection: service.connectedDevices[deviceId])
+            service.smsPlugin.openAttachment(attachment, connection: service.connection(for: deviceId))
         }
         vm.onOpenThread = { threadId in
-            guard let conn = service.connectedDevices[deviceId] else { return }
+            guard let conn = service.connection(for: deviceId) else { return }
             service.smsPlugin.requestConversation(threadId: threadId, connection: conn)
         }
         vm.onLoadEarlierMessages = { threadId in
-            guard let conn = service.connectedDevices[deviceId] else { return }
+            guard let conn = service.connection(for: deviceId) else { return }
             service.smsPlugin.requestEarlierMessages(threadId: threadId, connection: conn)
         }
         vm.onSetVolume = { val in service.setPhoneVolume(Int(val * 100), deviceId: deviceId) }
@@ -378,7 +376,7 @@ final class TetherAppModel {
 
     func pair(with deviceId: String) {
         let service = TetherService.shared
-        if let info = service.connectedDevices[deviceId]?.peerDeviceInfo
+        if let info = service.connection(for: deviceId)?.peerDeviceInfo
             ?? service.discoveredDevices.first(where: { $0.deviceId == deviceId }) {
             service.requestPair(with: info)
         }

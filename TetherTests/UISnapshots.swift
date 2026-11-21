@@ -138,15 +138,7 @@ import ScreenCaptureKit
         // images on a 1x display, at the cost of Liquid Glass.
         if let scale = ProcessInfo.processInfo.environment["TETHER_SNAPSHOT_SCALE"].flatMap(Double.init), scale > 1,
            let frameView = window.contentView?.superview ?? window.contentView {
-            frameView.layoutSubtreeIfNeeded()
-            let bounds = frameView.bounds
-            let rep = NSBitmapImageRep(
-                bitmapDataPlanes: nil, pixelsWide: Int(bounds.width * scale), pixelsHigh: Int(bounds.height * scale),
-                bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-                colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
-            rep.size = bounds.size
-            frameView.cacheDisplay(in: bounds, to: rep)
-            try rep.representation(using: .png, properties: [:])?.write(to: url)
+            try SnapshotDrawing.write(frameView, scale: scale, to: url)
             return
         }
 
@@ -158,10 +150,7 @@ import ScreenCaptureKit
             return
         }
         guard let frameView = window.contentView?.superview ?? window.contentView else { return }
-        frameView.layoutSubtreeIfNeeded()
-        guard let rep = frameView.bitmapImageRepForCachingDisplay(in: frameView.bounds) else { return }
-        frameView.cacheDisplay(in: frameView.bounds, to: rep)
-        try rep.representation(using: .png, properties: [:])?.write(to: url)
+        try SnapshotDrawing.write(frameView, scale: window.backingScaleFactor, to: url)
     }
 
     private static func captureWindow(_ window: NSWindow) async throws -> CGImage? {

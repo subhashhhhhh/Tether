@@ -75,28 +75,8 @@ final class TelephonyPlugin: TetherPlugin, @unchecked Sendable {
             if event != "missedCall" { return }
         }
 
-        let content = UNMutableNotificationContent()
-        switch event {
-        case "ringing":
-            content.title = who
-            content.subtitle = "Incoming call"
-            if name != nil, let number { content.body = number }
-            content.sound = .default
-            content.interruptionLevel = .timeSensitive
-            content.categoryIdentifier = Self.callCategory
-            content.userInfo = ["deviceId": deviceId]
-        case "missedCall":
-            content.title = who
-            content.subtitle = "Missed call"
-            if name != nil, let number { content.body = number }
-            content.sound = .default
-        case "talking":
-            content.title = who
-            content.subtitle = "Call in progress"
-        case "sms":
-            content.title = "Message from \(who)"
-            content.body = packet.string(for: "messageBody") ?? ""
-        default:
+        guard let content = Self.banner(for: event, who: who, number: name != nil ? number : nil, deviceId: deviceId,
+                                        messageBody: packet.string(for: "messageBody")) else {
             TetherLog("[TelephonyPlugin] Ignoring unknown telephony event '\(event)'")
             return
         }
@@ -110,6 +90,38 @@ final class TelephonyPlugin: TetherPlugin, @unchecked Sendable {
                 TetherLog("[TelephonyPlugin] Failed to post notification: \(error)")
             }
         }
+    }
+
+    /// The banner for a call event, or nil for an event Tether doesn't show.
+    /// `number` is shown under a contact's name, so it's nil when `who` is
+    /// already the number.
+    static func banner(for event: String, who: String, number: String?, deviceId: String,
+                       messageBody: String?) -> UNMutableNotificationContent? {
+        let content = UNMutableNotificationContent()
+        switch event {
+        case "ringing":
+            content.title = who
+            content.subtitle = "Incoming call"
+            if let number { content.body = number }
+            content.sound = .default
+            content.interruptionLevel = .timeSensitive
+            content.categoryIdentifier = Self.callCategory
+            content.userInfo = ["deviceId": deviceId]
+        case "missedCall":
+            content.title = who
+            content.subtitle = "Missed call"
+            if let number { content.body = number }
+            content.sound = .default
+        case "talking":
+            content.title = who
+            content.subtitle = "Call in progress"
+        case "sms":
+            content.title = "Message from \(who)"
+            content.body = messageBody ?? ""
+        default:
+            return nil
+        }
+        return content
     }
 
     /// Asks the phone to silence its ringer, from the incoming-call notification.

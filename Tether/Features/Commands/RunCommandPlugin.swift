@@ -223,16 +223,7 @@ final class RunCommandPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
             self.appendLog(commandId: command.id, line: "▶ Running: \(command.command)")
         }
 
-        let process = Process()
-        if command.id.hasPrefix(Self.shortcutPrefix) {
-            // Run by name, never through the shell: a shortcut's name is text.
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/shortcuts")
-            process.arguments = ["run", String(command.id.dropFirst(Self.shortcutPrefix.count))]
-        } else {
-            process.executableURL = URL(fileURLWithPath: "/bin/sh")
-            process.arguments = ["-c", command.command]
-        }
-
+        let process = Self.process(for: command)
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
         process.standardOutput = stdoutPipe
@@ -242,106 +233,71 @@ final class RunCommandPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
             self.activeProcesses[currentId] = process
         }
 
-        stdoutPipe.fileHandleForReading.readabilityHandler = { [weak self, weak connection] handle in
-            let data = handle.availableData
-            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-            let lines = text.components(separatedBy: .newlines).filter { !$0.isEmpty }
-
-            DispatchQueue.main.async {
-                for line in lines {
-                    self?.appendLog(commandId: command.id, line: line)
-                }
-            }
-
-            if let conn = connection, !lines.isEmpty {
-                let outPacket = NetworkPacket(
-                    type: Self.outputType,
-                    body: [
-                        "commandOutput": AnyCodable(true),
-                        "stdout": AnyCodable(lines),
-                        "stderr": AnyCodable([] as [String]),
-                        "id": AnyCodable(Int(currentId))
-                    ]
-                )
-                conn.send(packet: outPacket)
-            }
-        }
-
-        stderrPipe.fileHandleForReading.readabilityHandler = { [weak self, weak connection] handle in
-            let data = handle.availableData
-            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
-            let lines = text.components(separatedBy: .newlines).filter { !$0.isEmpty }
-
-            DispatchQueue.main.async {
-                for line in lines {
-                    self?.appendLog(commandId: command.id, line: "stderr: \(line)")
-                }
-            }
-
-            if let conn = connection, !lines.isEmpty {
-                let outPacket = NetworkPacket(
-                    type: Self.outputType,
-                    body: [
-                        "commandOutput": AnyCodable(true),
-                        "stdout": AnyCodable([] as [String]),
-                        "stderr": AnyCodable(lines),
-                        "id": AnyCodable(Int(currentId))
-                    ]
-                )
-                conn.send(packet: outPacket)
-            }
-        }
+        stdoutPipe.fileHandleForReading.readabilityHandler = forwardOutput(of: command, id: currentId, isError: false, to: connection)
+        stderrPipe.fileHandleForReading.readabilityHandler = forwardOutput(of: command, id: currentId, isError: true, to: connection)
 
         process.terminationHandler = { [weak self, weak connection] proc in
-            let exitCode = proc.terminationStatus
-            let success = (exitCode == 0)
-
             stdoutPipe.fileHandleForReading.readabilityHandler = nil
             stderrPipe.fileHandleForReading.readabilityHandler = nil
-
-            self?.lock.withLock {
-                _ = self?.activeProcesses.removeValue(forKey: currentId)
-            }
-
-            DispatchQueue.main.async {
-                self?.appendLog(commandId: command.id, line: "■ Finished with exit code \(exitCode)")
-            }
-
-            if let conn = connection {
-                let finishPacket = NetworkPacket(
-                    type: Self.outputType,
-                    body: [
-                        "commandFinished": AnyCodable(true),
-                        "success": AnyCodable(success),
-                        "exitCode": AnyCodable(Int(exitCode)),
-                        "id": AnyCodable(Int(currentId))
-                    ]
-                )
-                conn.send(packet: finishPacket)
-            }
-            TetherLog("[RunCommandPlugin] Command [\(currentId)] finished with exit code \(exitCode)")
+            self?.finished(command, id: currentId, exitCode: proc.terminationStatus, connection: connection)
         }
 
         do {
             try process.run()
         } catch {
             TetherLog("[RunCommandPlugin] Failed to run process: \(error)")
-            lock.withLock {
-                _ = self.activeProcesses.removeValue(forKey: currentId)
-            }
-            if let conn = connection {
-                let finishPacket = NetworkPacket(
-                    type: Self.outputType,
-                    body: [
-                        "commandFinished": AnyCodable(true),
-                        "success": AnyCodable(false),
-                        "exitCode": AnyCodable(-1),
-                        "id": AnyCodable(Int(currentId))
-                    ]
-                )
-                conn.send(packet: finishPacket)
-            }
+            finished(command, id: currentId, exitCode: -1, connection: connection)
         }
+    }
+
+    /// A shortcut runs by name, never through the shell: its name is text.
+    private static func process(for command: RemoteCommand) -> Process {
+        let process = Process()
+        if command.id.hasPrefix(shortcutPrefix) {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/shortcuts")
+            process.arguments = ["run", String(command.id.dropFirst(shortcutPrefix.count))]
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.arguments = ["-c", command.command]
+        }
+        return process
+    }
+
+    /// Passes a command's output, as it comes, to the log and the phone.
+    private func forwardOutput(of command: RemoteCommand, id: UInt32, isError: Bool,
+                               to connection: DeviceConnection?) -> (FileHandle) -> Void {
+        { [weak self, weak connection] handle in
+            let data = handle.availableData
+            guard !data.isEmpty, let text = String(data: data, encoding: .utf8) else { return }
+            let lines = text.components(separatedBy: .newlines).filter { !$0.isEmpty }
+            guard !lines.isEmpty else { return }
+            DispatchQueue.main.async {
+                for line in lines {
+                    self?.appendLog(commandId: command.id, line: isError ? "stderr: \(line)" : line)
+                }
+            }
+            connection?.send(packet: NetworkPacket(type: Self.outputType, body: [
+                "commandOutput": AnyCodable(true),
+                "stdout": AnyCodable(isError ? [] : lines),
+                "stderr": AnyCodable(isError ? lines : []),
+                "id": AnyCodable(Int(id)),
+            ]))
+        }
+    }
+
+    /// A command ended, ran or not: logged, and told to the phone.
+    private func finished(_ command: RemoteCommand, id: UInt32, exitCode: Int32, connection: DeviceConnection?) {
+        lock.withLock { _ = activeProcesses.removeValue(forKey: id) }
+        DispatchQueue.main.async {
+            self.appendLog(commandId: command.id, line: "■ Finished with exit code \(exitCode)")
+        }
+        connection?.send(packet: NetworkPacket(type: Self.outputType, body: [
+            "commandFinished": AnyCodable(true),
+            "success": AnyCodable(exitCode == 0),
+            "exitCode": AnyCodable(Int(exitCode)),
+            "id": AnyCodable(Int(id)),
+        ]))
+        TetherLog("[RunCommandPlugin] Command [\(id)] finished with exit code \(exitCode)")
     }
 
     func stopAllProcesses() {

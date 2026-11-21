@@ -24,7 +24,6 @@ final class BatteryPlugin: ObservableObject, TetherPlugin, @unchecked Sendable {
 
     @Published private(set) var deviceBatteries: [String: DeviceBatteryInfo] = [:]
 
-    private let lock = NSLock()
     private var connections: [String: DeviceConnection] = [:]
     private var lastSent: MacBatteryStatus?
 
@@ -36,7 +35,7 @@ final class BatteryPlugin: ObservableObject, TetherPlugin, @unchecked Sendable {
 
     func onConnected(connection: DeviceConnection) {
         if let id = connection.peerDeviceInfo?.deviceId {
-            lock.withLock { connections[id] = connection }
+            connections[id] = connection
         }
         // Like desktop KDE Connect: the current charge as soon as the phone connects.
         if let packet = Self.packet(MacBattery.status()) { connection.send(packet: packet) }
@@ -59,7 +58,7 @@ final class BatteryPlugin: ObservableObject, TetherPlugin, @unchecked Sendable {
 
     func onDisconnected(connection: DeviceConnection) {
         if let id = connection.peerDeviceInfo?.deviceId {
-            lock.withLock { if connections[id] === connection { connections[id] = nil } }
+            if connections[id] === connection { connections[id] = nil }
             DispatchQueue.main.async {
                 if !TetherService.shared.isDeviceConnected(deviceId: id) {
                     self.deviceBatteries.removeValue(forKey: id)
@@ -97,12 +96,11 @@ final class BatteryPlugin: ObservableObject, TetherPlugin, @unchecked Sendable {
     /// Tells every connected phone about this Mac's battery, when it changed.
     private func reportMacBattery() {
         guard let status = MacBattery.status() else { return }
-        let targets: [DeviceConnection]? = lock.withLock {
-            guard status != lastSent else { return nil }
-            lastSent = status
-            return Array(connections.values)
-        }
-        guard let targets, let packet = Self.packet(status) else { return }
+        // Everything here runs on the main thread: the battery callback is on
+        // the main run loop, and connects are delivered there too.
+        guard status != lastSent, let packet = Self.packet(status) else { return }
+        lastSent = status
+        let targets = Array(connections.values)
         TetherLog("[Battery] This Mac: \(status.charge)%\(status.isCharging ? ", plugged in" : "")")
         for connection in targets { connection.send(packet: packet) }
     }

@@ -65,6 +65,5 @@ enum DockPresence {
         if redraw { NSApp.dockTile.badgeLabel = nil }
         NSApp.dockTile.badgeLabel = badgeCount > 0 ? String(badgeCount) : nil
         NSApp.dockTile.display()
-        TetherLog("[Dock] Badge \(badgeCount)")
     }
 }

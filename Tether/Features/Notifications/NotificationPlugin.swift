@@ -353,10 +353,55 @@ final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin, UNUser
             return
         }
 
+        let silent = packet.bool(for: "silent")
+        let item = Self.notification(from: packet, id: notifId, deviceId: deviceId,
+                                     image: images.image(deviceId: deviceId, hash: packet.string(for: "payloadHash")))
+        rememberGlyph(of: item)
+        var list = notifications[deviceId] ?? []
+        let isUpdate = list.contains { $0.id == notifId }
+        list.removeAll { $0.id == notifId }
+        list.insert(item, at: 0)
+        list.sort { $0.date > $1.date }
+        notifications[deviceId] = list
+
+        let key = NotificationImageTracker.Key(deviceId: deviceId, notificationId: notifId)
+        let suppressNativeDuplicate = NativeNotificationFilter.shouldSuppress(item)
+        let waitForImage = !silent && !suppressNativeDuplicate && item.imageData == nil && Self.expectsImage(packet)
+        let token = imageTracker.begin(key, packetId: packet.id, hash: packet.string(for: "payloadHash"), waiting: waitForImage)
+
+        // The phone marks an update that shouldn't alert again (a download's
+        // progress, a timer) and the current notifications it sends on
+        // request as silent. An update still refreshes its banner, quietly.
+        if silent {
+            if isUpdate, !suppressNativeDuplicate { updateDeliveredBanner(item) }
+            return
+        }
+        // Keep mirrored WhatsApp items without duplicating native alerts.
+        if suppressNativeDuplicate { return }
+
+        if let code = item.code, UserDefaults.standard.bool(forKey: OneTimeCode.autoCopyKey) {
+            Self.copyToPasteboard(code)
+            TetherLog("[NotificationPlugin] Copied a verification code from \(item.appName)")
+        }
+
+        if waitForImage {
+            // Never hold up an alert for a slow/broken image transfer. A late
+            // image enriches the in-app list without posting a second banner.
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.imageWait) { [weak self] in
+                self?.finishWaiting(key, token: token)
+            }
+        } else {
+            post(item)
+        }
+    }
+
+    /// What a notification packet says, as a notification: its chat lines,
+    /// hidden text and any sign-in code worked out. `image` is its picture,
+    /// when already stored.
+    static func notification(from packet: NetworkPacket, id notifId: String, deviceId: String, image: Data?) -> PhoneNotification {
         let appName = packet.string(for: "appName") ?? "Notification"
         var title = packet.string(for: "title") ?? ""
         var text = packet.string(for: "text") ?? (packet.string(for: "ticker") ?? "")
-        let silent = packet.bool(for: "silent")
         // A chat sends its recent messages with their senders, as the
         // desktop app shows them: the chat's name as the title, then each
         // message under its sender.
@@ -386,50 +431,14 @@ final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin, UNUser
             // Hidden text has nothing to find, and a "Copy 123456" button
             // carries the code when the text doesn't.
             code: isRedacted ? OneTimeCode.find(inAction: actions) : (OneTimeCode.find(in: title + "\n" + text) ?? OneTimeCode.find(inAction: actions)),
-            imageData: images.image(deviceId: deviceId, hash: packet.string(for: "payloadHash")),
+            imageData: image,
             // The phone can send a button with no title; there's nothing to show for it.
             actions: actions
         )
         item.conversation = conversation
         item.groupName = groupName
         item.isRedacted = isRedacted
-        rememberGlyph(of: item)
-        var list = notifications[deviceId] ?? []
-        let isUpdate = list.contains { $0.id == notifId }
-        list.removeAll { $0.id == notifId }
-        list.insert(item, at: 0)
-        list.sort { $0.date > $1.date }
-        notifications[deviceId] = list
-
-        let key = NotificationImageTracker.Key(deviceId: deviceId, notificationId: notifId)
-        let suppressNativeDuplicate = NativeNotificationFilter.shouldSuppress(item)
-        let waitForImage = !silent && !suppressNativeDuplicate && item.imageData == nil && Self.expectsImage(packet)
-        let token = imageTracker.begin(key, packetId: packet.id, hash: packet.string(for: "payloadHash"), waiting: waitForImage)
-
-        // The phone marks an update that shouldn't alert again (a download's
-        // progress, a timer) and the current notifications it sends on
-        // request as silent. An update still refreshes its banner, quietly.
-        if silent {
-            if isUpdate, !suppressNativeDuplicate { updateDeliveredBanner(item) }
-            return
-        }
-        // Keep mirrored WhatsApp items without duplicating native alerts.
-        if suppressNativeDuplicate { return }
-
-        if let code = item.code, UserDefaults.standard.bool(forKey: OneTimeCode.autoCopyKey) {
-            Self.copyToPasteboard(code)
-            TetherLog("[NotificationPlugin] Copied a verification code from \(appName)")
-        }
-
-        if waitForImage {
-            // Never hold up an alert for a slow/broken image transfer. A late
-            // image enriches the in-app list without posting a second banner.
-            DispatchQueue.main.asyncAfter(deadline: .now() + Self.imageWait) { [weak self] in
-                self?.finishWaiting(key, token: token)
-            }
-        } else {
-            post(item)
-        }
+        return item
     }
 
     static func expectsImage(_ packet: NetworkPacket) -> Bool {

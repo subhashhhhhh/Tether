@@ -30,7 +30,8 @@ final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked Sendable
     private var lastLocalClipboardTimestamp = Int64(Date().timeIntervalSince1970 * 1000)
     private var timer: Timer?
     private var activeConnections: [DeviceConnection] = []
-    private let lock = NSLock()
+    // All of this plugin's state is used on the main thread only: the
+    // pasteboard timer, connects and packets are all delivered there.
 
     static let privateTypes: Set<NSPasteboard.PasteboardType> = [
         .init("org.nspasteboard.ConcealedType"),
@@ -50,7 +51,7 @@ final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked Sendable
     /// polled. Only while a device is there to send to.
     private func updateMonitoring() {
         DispatchQueue.main.async {
-            let wanted = !self.lock.withLock { self.activeConnections.isEmpty }
+            let wanted = !self.activeConnections.isEmpty
             if wanted, self.timer == nil {
                 // Catch up silently: a copy made while nobody was connected
                 // isn't sent the moment a phone appears.
@@ -98,17 +99,13 @@ final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked Sendable
             return
         }
 
-        lock.withLock {
-            activeConnections.removeAll { $0.peerDeviceInfo?.deviceId == deviceId }
-            activeConnections.append(connection)
-        }
+        activeConnections.removeAll { $0.peerDeviceInfo?.deviceId == deviceId }
+        activeConnections.append(connection)
         updateMonitoring()
     }
 
     func onDisconnected(connection: DeviceConnection) {
-        lock.withLock {
-            activeConnections.removeAll { $0 === connection }
-        }
+        activeConnections.removeAll { $0 === connection }
         updateMonitoring()
     }
 
@@ -214,8 +211,7 @@ final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked Sendable
             type: PacketType.clipboard,
             body: ["content": content]
         )
-        let targets: [DeviceConnection] = lock.withLock { activeConnections }
-        for connection in targets {
+        for connection in activeConnections {
             if let deviceId = connection.peerDeviceInfo?.deviceId,
                let paired = TrustStore.shared.pairedDevice(for: deviceId),
                paired.isClipboardSyncEnabled {

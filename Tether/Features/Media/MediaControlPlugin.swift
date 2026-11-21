@@ -180,10 +180,19 @@ final class MediaControlPlugin: ObservableObject, TetherPlugin, @unchecked Senda
               let deviceId = connection.peerDeviceInfo?.deviceId,
               packet.bool(for: "transferringAlbumArt"),
               // Art for a track that's already been replaced is stale.
-              packet.string(for: "albumArtUrl") == albumArtURLs[deviceId],
-              let data = try? Data(contentsOf: fileURL) else { return }
-
-        albumArt[deviceId] = data
+              let url = packet.string(for: "albumArtUrl"), url == albumArtURLs[deviceId] else { return }
+        // The file is removed when this returns; it's moved aside at once
+        // (cheap) and read off the main thread.
+        let kept = FileManager.default.temporaryDirectory.appendingPathComponent("tether-art-\(UUID().uuidString)")
+        guard (try? FileManager.default.moveItem(at: fileURL, to: kept)) != nil else { return }
+        DispatchQueue.global(qos: .utility).async {
+            let data = try? Data(contentsOf: kept)
+            try? FileManager.default.removeItem(at: kept)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let data, self.albumArtURLs[deviceId] == url else { return }
+                if self.albumArt[deviceId] != data { self.albumArt[deviceId] = data }
+            }
+        }
     }
 
     // MARK: - Commands

@@ -209,10 +209,16 @@ final class DeviceViewModel: Identifiable, Hashable {
         if let used = thread?.messages.last(where: { $0.subId.map(ids.contains) ?? false })?.subId {
             return used
         }
-        let lastSent = smsThreads
-            .flatMap(\.messages)
-            .filter { $0.isOutgoing && ($0.subId.map(ids.contains) ?? false) }
-            .max { $0.date < $1.date }
+        // Threads are newest first, so the search stops once no later
+        // thread can hold a newer sent message than the one found.
+        var lastSent: SMSMessage?
+        for thread in smsThreads {
+            if let found = lastSent, thread.lastDate < found.date { break }
+            if let sent = thread.messages.last(where: { $0.isOutgoing && ($0.subId.map(ids.contains) ?? false) }),
+               sent.date > (lastSent?.date ?? .distantPast) {
+                lastSent = sent
+            }
+        }
         return lastSent?.subId ?? sims.first?.id
     }
     /// The thread's people by name where the phone's contacts know them. A

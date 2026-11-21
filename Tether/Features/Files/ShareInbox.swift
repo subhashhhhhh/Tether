@@ -81,51 +81,8 @@ final class ShareInbox {
         }
         pasteboard.clearContents()
 
-        var files: [URL] = []
-        var links: [URL] = []
-        var texts: [String] = []
-        var skippedFolders = 0
-        var chosenDeviceId: String?
-        let now = Date().timeIntervalSince1970
-
-        for item in entries {
-            func string(_ key: NSPasteboard.PasteboardType) -> String? {
-                item[key].flatMap { String(data: $0, encoding: .utf8) }
-            }
-            guard let created = string(Key.created).flatMap(Double.init),
-                  now - created < Self.maximumAge,
-                  let kind = string(Key.kind) else { continue }
-            chosenDeviceId = chosenDeviceId ?? string(Key.device)
-
-            switch kind {
-            case "file":
-                guard let path = string(Key.path) else { continue }
-                var isDirectory: ObjCBool = false
-                guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else { continue }
-                if isDirectory.boolValue {
-                    skippedFolders += 1
-                } else {
-                    files.append(URL(fileURLWithPath: path))
-                }
-            case "data":
-                if let data = item[Key.data],
-                   let url = writeOutgoing(data, name: string(Key.name) ?? "Shared") {
-                    files.append(url)
-                }
-            case "url":
-                if let url = string(Key.value).flatMap(URL.init(string:)),
-                   ["http", "https"].contains(url.scheme?.lowercased()) {
-                    links.append(url)
-                }
-            case "text":
-                if let text = string(Key.value), !text.isEmpty {
-                    texts.append(text)
-                }
-            default:
-                continue
-            }
-        }
-
+        let shared = read(entries)
+        let (files, links, texts, skippedFolders) = (shared.files, shared.links, shared.texts, shared.skippedFolders)
         let total = files.count + links.count + texts.count
         guard total > 0 else {
             TetherLog("[ShareInbox] Nothing sendable in \(entries.count) shared item(s)")
@@ -134,22 +91,7 @@ final class ShareInbox {
             }
             return
         }
-
-        let model = TetherAppModel.shared
-        let device: DeviceViewModel
-        if let chosenDeviceId {
-            // Picked in the extension's chooser; it may have disconnected since.
-            guard let chosen = model.connectedDevices.first(where: { $0.id == chosenDeviceId }) else {
-                notify(title: "Device disconnected", body: "The device you chose is no longer connected. Share again to pick another.")
-                return
-            }
-            device = chosen
-        } else if let primary = model.primaryDevice {
-            device = primary
-        } else {
-            notify(title: "No phone connected", body: "Open KDE Connect on your phone, then share again.")
-            return
-        }
+        guard let device = targetDevice(chosen: shared.deviceId) else { return }
 
         TetherLog("[ShareInbox] Sending \(files.count) file(s), \(links.count) link(s), \(texts.count) text(s) to \(device.name)")
         if !files.isEmpty { device.sendFiles(files) }
@@ -157,6 +99,77 @@ final class ShareInbox {
         for text in texts { TetherService.shared.sendText(text, to: device.id) }
 
         notify(title: "Sending to \(device.name)", body: summary(files: files, links: links.count, texts: texts.count, skippedFolders: skippedFolders))
+    }
+
+    /// What the share extension handed over, still fresh enough to send.
+    private struct Shared {
+        var files: [URL] = []
+        var links: [URL] = []
+        var texts: [String] = []
+        var skippedFolders = 0
+        var deviceId: String?
+    }
+
+    private func read(_ entries: [[NSPasteboard.PasteboardType: Data]]) -> Shared {
+        var shared = Shared()
+        let now = Date().timeIntervalSince1970
+        for item in entries {
+            func string(_ key: NSPasteboard.PasteboardType) -> String? {
+                item[key].flatMap { String(data: $0, encoding: .utf8) }
+            }
+            guard let created = string(Key.created).flatMap(Double.init),
+                  now - created < Self.maximumAge,
+                  let kind = string(Key.kind) else { continue }
+            shared.deviceId = shared.deviceId ?? string(Key.device)
+
+            switch kind {
+            case "file":
+                guard let path = string(Key.path) else { continue }
+                var isDirectory: ObjCBool = false
+                guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else { continue }
+                if isDirectory.boolValue {
+                    shared.skippedFolders += 1
+                } else {
+                    shared.files.append(URL(fileURLWithPath: path))
+                }
+            case "data":
+                if let data = item[Key.data],
+                   let url = writeOutgoing(data, name: string(Key.name) ?? "Shared") {
+                    shared.files.append(url)
+                }
+            case "url":
+                if let url = string(Key.value).flatMap(URL.init(string:)),
+                   ["http", "https"].contains(url.scheme?.lowercased()) {
+                    shared.links.append(url)
+                }
+            case "text":
+                if let text = string(Key.value), !text.isEmpty {
+                    shared.texts.append(text)
+                }
+            default:
+                continue
+            }
+        }
+        return shared
+    }
+
+    /// The device picked in the extension, else the main one; nil, with a
+    /// note saying why, when there's none to send to.
+    private func targetDevice(chosen deviceId: String?) -> DeviceViewModel? {
+        let model = TetherAppModel.shared
+        if let deviceId {
+            // Picked in the extension's chooser; it may have disconnected since.
+            guard let chosen = model.connectedDevices.first(where: { $0.id == deviceId }) else {
+                notify(title: "Device disconnected", body: "The device you chose is no longer connected. Share again to pick another.")
+                return nil
+            }
+            return chosen
+        }
+        guard let primary = model.primaryDevice else {
+            notify(title: "No phone connected", body: "Open KDE Connect on your phone, then share again.")
+            return nil
+        }
+        return primary
     }
 
     private func summary(files: [URL], links: Int, texts: Int, skippedFolders: Int) -> String {
