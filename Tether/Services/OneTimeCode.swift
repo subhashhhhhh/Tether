@@ -94,8 +94,19 @@ nonisolated enum OneTimeCode {
     }
 
     /// Each match's capture groups (0 is the whole match) and character offset.
+    /// Compiled once each; several run on every notification.
+    private static let compiled = NSCache<NSString, NSRegularExpression>()
+
     private static func matches(_ pattern: String, in text: String) -> [(groups: [String], position: Int)] {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let regex: NSRegularExpression
+        if let cached = compiled.object(forKey: pattern as NSString) {
+            regex = cached
+        } else if let made = try? NSRegularExpression(pattern: pattern) {
+            compiled.setObject(made, forKey: pattern as NSString)
+            regex = made
+        } else {
+            return []
+        }
         let nsText = text as NSString
         return regex.matches(in: text, range: NSRange(location: 0, length: nsText.length)).compactMap { match in
             let groups = (0..<match.numberOfRanges).map { index -> String in

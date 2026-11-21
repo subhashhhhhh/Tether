@@ -159,6 +159,8 @@ nonisolated final class NowPlayingReader: @unchecked Sendable {
         }
     }
 
+    private static let isoFormatter = ISO8601DateFormatter()
+
     static func parse(_ payload: [String: Any]) -> MacNowPlaying? {
         guard let title = payload["title"] as? String, !title.isEmpty else { return nil }
         var state = MacNowPlaying()
@@ -169,7 +171,7 @@ nonisolated final class NowPlayingReader: @unchecked Sendable {
         state.isPlaying = payload["playing"] as? Bool ?? false
         state.duration = payload["duration"] as? Double ?? 0
         state.elapsed = payload["elapsedTime"] as? Double ?? 0
-        if let stamp = payload["timestamp"] as? String, let date = ISO8601DateFormatter().date(from: stamp) {
+        if let stamp = payload["timestamp"] as? String, let date = Self.isoFormatter.date(from: stamp) {
             state.timestamp = date
         }
         return state

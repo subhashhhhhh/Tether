@@ -183,7 +183,7 @@ public struct MenuBarView: View {
                 PopoverNotificationRow(item: item) { open(.notifications, on: device) }
             }
 
-            let unread = device.smsThreads.reduce(0) { $0 + $1.unreadCount }
+            let unread = device.unreadMessageCount
             if unread > 0 {
                 MenuRow(title: "Messages", systemImage: "message", detail: "\(unread) unread") {
                     open(.messages, on: device)

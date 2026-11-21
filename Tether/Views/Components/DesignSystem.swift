@@ -86,15 +86,8 @@ struct InitialsAvatar: View {
     /// from it would suggest someone.
     var isSenderID = false
 
-    /// Decoded photos, so a long list doesn't decode them on every redraw.
-    private static let images = NSCache<NSData, NSImage>()
-
     private var image: NSImage? {
-        guard let photo else { return nil }
-        if let cached = Self.images.object(forKey: photo as NSData) { return cached }
-        guard let image = NSImage(data: photo) else { return nil }
-        Self.images.setObject(image, forKey: photo as NSData)
-        return image
+        photo.flatMap { ImageCache.image($0, maxPixels: Int(size * 2)) }
     }
 
     private var initials: String {

@@ -23,7 +23,12 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
 
     /// By device, then thread: thread IDs are only unique on one phone, and
     /// with two phones a reply must reach the right one.
-    @Published public private(set) var conversations: [String: [Int64: SMSConversation]] = [:]
+    @Published public private(set) var conversations: [String: [Int64: SMSConversation]] = [:] {
+        didSet { revision &+= 1 }
+    }
+    /// Changes whenever conversations do, so a reader can skip re-sorting
+    /// when nothing changed.
+    public private(set) var revision = 0
     @Published public private(set) var activeThreadId: Int64?
 
     private let lock = NSLock()
@@ -50,14 +55,14 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
     }
 
     /// Where attachments are kept once fetched, so each is fetched once.
-    static let attachmentDirectory: URL = {
+    nonisolated static let attachmentDirectory: URL = {
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
         return caches.appendingPathComponent("TetherAttachments", isDirectory: true)
     }()
 
     /// The file for an attachment; `uniqueIdentifier` comes from the phone, so
     /// it's only ever used sanitised.
-    static func attachmentURL(for uniqueIdentifier: String) -> URL {
+    nonisolated static func attachmentURL(for uniqueIdentifier: String) -> URL {
         attachmentDirectory.appendingPathComponent(SafeFilename.sanitize(uniqueIdentifier, fallback: "attachment"))
     }
 
@@ -143,7 +148,7 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
     /// Connect's: as many as are already loaded, at least 50.
     public func requestEarlierMessages(threadId: Int64, connection: DeviceConnection) {
         let deviceId = connection.peerDeviceInfo?.deviceId ?? ""
-        let loaded = DispatchQueue.main.sync { conversations[deviceId]?[threadId]?.messages ?? [] }
+        let loaded = conversations[deviceId]?[threadId]?.messages ?? []
         guard let page = Self.earlierPage(before: loaded) else {
             requestConversation(threadId: threadId, connection: connection)
             return
@@ -228,10 +233,17 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
 
     // MARK: - Internal Message Parsing
 
+    /// Parsing, and checking the disk for fetched attachments, happens here
+    /// rather than on the main thread, where packets are delivered.
+    nonisolated private static let parseQueue = DispatchQueue(label: "com.subhashh.tether.sms-parse", qos: .userInitiated)
+
     private func handleBatchMessages(packet: NetworkPacket, deviceId: String) {
         let rawMessages = packet.objectArray(for: "messages")
         guard !rawMessages.isEmpty else { return }
+        Self.parseQueue.async { self.merge(Self.parse(rawMessages), deviceId: deviceId) }
+    }
 
+    nonisolated private static func parse(_ rawMessages: [[String: Any]]) -> [SMSMessage] {
         var parsedMessages: [SMSMessage] = []
         for raw in rawMessages {
             if var msg = SMSMessage.from(dictionary: raw) {
@@ -242,24 +254,21 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
                 parsedMessages.append(msg)
             }
         }
+        return parsedMessages
+    }
 
+    private func merge(_ parsedMessages: [SMSMessage], deviceId: String) {
         guard !parsedMessages.isEmpty else { return }
-
+        let byThread = Dictionary(grouping: parsedMessages, by: \.threadId)
         DispatchQueue.main.async {
-            // Merged into a copy and published once, not once per message.
+            // Each thread merged once per batch and published once.
             var threads = self.conversations[deviceId] ?? [:]
-            for message in parsedMessages {
-                let threadId = message.threadId
-                var conversation = threads[threadId] ?? SMSConversation(threadId: threadId, addresses: message.addresses)
-
-                if conversation.addresses.isEmpty && !message.addresses.isEmpty {
-                    conversation.addresses = message.addresses
+            for (threadId, incoming) in byThread {
+                var conversation = threads[threadId] ?? SMSConversation(threadId: threadId, addresses: incoming[0].addresses)
+                if conversation.addresses.isEmpty, let addresses = incoming.first(where: { !$0.addresses.isEmpty })?.addresses {
+                    conversation.addresses = addresses
                 }
-
-                conversation.messages = Self.merging(message, into: conversation.messages)
-
-                // Sort chronologically
-                conversation.messages.sort(by: { $0.date < $1.date })
+                conversation.messages = Self.merging(incoming, into: conversation.messages)
                 threads[threadId] = conversation
             }
             self.conversations[deviceId] = threads
@@ -272,27 +281,42 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
     /// same words a second apart both stay. One Tether added while sending
     /// is replaced when the phone reports it.
     static func merging(_ message: SMSMessage, into messages: [SMSMessage]) -> [SMSMessage] {
+        merging([message], into: messages)
+    }
+
+    /// Merges a batch into a thread, oldest first. Messages are found by key
+    /// through an index built once, and the thread is sorted once at the end,
+    /// so a large page costs about as much as its length, not its square.
+    static func merging(_ incoming: [SMSMessage], into messages: [SMSMessage]) -> [SMSMessage] {
         var messages = messages
-        if let key = message.phoneKey {
-            if let index = messages.firstIndex(where: { $0.phoneKey == key }) {
-                messages[index] = message
-                return messages
-            }
-            if message.isOutgoing, let index = messages.firstIndex(where: {
-                $0.phoneId == nil && $0.isOutgoing && $0.body == message.body
-                    && abs($0.date.timeIntervalSince(message.date)) < 120
-            }) {
-                messages[index] = message
-                return messages
-            }
-            messages.append(message)
-            return messages
+        var indexByKey: [SMSMessage.PhoneKey: Int] = [:]
+        for (index, message) in messages.enumerated() {
+            if let key = message.phoneKey { indexByKey[key] = index }
         }
-        // A phone that doesn't send IDs: same words, same kind, within 2 s.
-        let isCopy = messages.contains {
-            $0.body == message.body && $0.type == message.type && abs($0.date.timeIntervalSince(message.date)) < 2
+        for message in incoming {
+            if let key = message.phoneKey {
+                if let index = indexByKey[key] {
+                    messages[index] = message
+                } else if message.isOutgoing, let index = messages.firstIndex(where: {
+                    $0.phoneId == nil && $0.isOutgoing && $0.body == message.body
+                        && abs($0.date.timeIntervalSince(message.date)) < 120
+                }) {
+                    // The copy added while sending, now reported by the phone.
+                    messages[index] = message
+                    indexByKey[key] = index
+                } else {
+                    indexByKey[key] = messages.count
+                    messages.append(message)
+                }
+            } else {
+                // A phone that doesn't send IDs: same words, same kind, within 2 s.
+                let isCopy = messages.contains {
+                    $0.body == message.body && $0.type == message.type && abs($0.date.timeIntervalSince(message.date)) < 2
+                }
+                if !isCopy { messages.append(message) }
+            }
         }
-        if !isCopy { messages.append(message) }
+        messages.sort { $0.date < $1.date }
         return messages
     }
 }

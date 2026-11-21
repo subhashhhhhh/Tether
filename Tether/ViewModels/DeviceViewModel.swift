@@ -47,6 +47,8 @@ public final class DeviceViewModel: Identifiable, Hashable {
 
     public var transfers: [TransferItem]
     public var smsThreads: [SMSConversation]
+    /// Unread texts across threads, counted once when threads change.
+    public var unreadMessageCount = 0
     /// The phone's contacts, for names and photos instead of numbers.
     var contacts = ContactBook()
     public var commands: [RemoteCommand]
@@ -70,29 +72,29 @@ public final class DeviceViewModel: Identifiable, Hashable {
     public var isViaTailscale = false
 
     // Action handlers injected by TetherAppModel or mocked
-    public var onPing: (() -> Void)?
-    public var onSendClipboard: (() -> Void)?
-    public var onCopyReceivedClipboard: ((String) -> Void)?
-    public var onCancelTransfer: ((UUID) -> Void)?
-    public var onSendFiles: (([URL]) -> Void)?
-    public var onFindPhone: (() -> Void)?
-    public var onLockDevice: (() -> Void)?
-    public var onPair: (() -> Void)?
-    public var onUnpair: (() -> Void)?
-    public var onExecuteCommand: ((String) -> Void)?
-    public var onSaveCommand: ((RemoteCommand) -> Void)?
-    public var onDeleteCommand: ((String) -> Void)?
-    public var onSendSMS: (([String], String, Int64?, Int64?) -> Void)?
-    public var onRefreshMessages: (() -> Void)?
-    public var onOpenThread: ((Int64) -> Void)?
-    public var onOpenAttachment: ((SMSAttachment) -> Void)?
-    public var onLoadEarlierMessages: ((Int64) -> Void)?
-    public var onSetVolume: ((Float) -> Void)?
-    public var onMediaAction: ((String) -> Void)?
-    public var onChooseMediaPlayer: ((String?) -> Void)?
-    public var onReplyToNotification: ((PhoneNotification, String) -> Void)?
-    public var onDismissNotification: ((PhoneNotification) -> Void)?
-    public var onNotificationAction: ((PhoneNotification, String) -> Void)?
+    @ObservationIgnored public var onPing: (() -> Void)?
+    @ObservationIgnored public var onSendClipboard: (() -> Void)?
+    @ObservationIgnored public var onCopyReceivedClipboard: ((String) -> Void)?
+    @ObservationIgnored public var onCancelTransfer: ((UUID) -> Void)?
+    @ObservationIgnored public var onSendFiles: (([URL]) -> Void)?
+    @ObservationIgnored public var onFindPhone: (() -> Void)?
+    @ObservationIgnored public var onLockDevice: (() -> Void)?
+    @ObservationIgnored public var onPair: (() -> Void)?
+    @ObservationIgnored public var onUnpair: (() -> Void)?
+    @ObservationIgnored public var onExecuteCommand: ((String) -> Void)?
+    @ObservationIgnored public var onSaveCommand: ((RemoteCommand) -> Void)?
+    @ObservationIgnored public var onDeleteCommand: ((String) -> Void)?
+    @ObservationIgnored public var onSendSMS: (([String], String, Int64?, Int64?) -> Void)?
+    @ObservationIgnored public var onRefreshMessages: (() -> Void)?
+    @ObservationIgnored public var onOpenThread: ((Int64) -> Void)?
+    @ObservationIgnored public var onOpenAttachment: ((SMSAttachment) -> Void)?
+    @ObservationIgnored public var onLoadEarlierMessages: ((Int64) -> Void)?
+    @ObservationIgnored public var onSetVolume: ((Float) -> Void)?
+    @ObservationIgnored public var onMediaAction: ((String) -> Void)?
+    @ObservationIgnored public var onChooseMediaPlayer: ((String?) -> Void)?
+    @ObservationIgnored public var onReplyToNotification: ((PhoneNotification, String) -> Void)?
+    @ObservationIgnored public var onDismissNotification: ((PhoneNotification) -> Void)?
+    @ObservationIgnored public var onNotificationAction: ((PhoneNotification, String) -> Void)?
 
     public init(
         id: String,
@@ -132,6 +134,7 @@ public final class DeviceViewModel: Identifiable, Hashable {
         self.nowPlayingIsPlaying = nowPlayingIsPlaying
         self.transfers = transfers
         self.smsThreads = smsThreads
+        self.unreadMessageCount = smsThreads.reduce(0) { $0 + $1.unreadCount }
         self.commands = commands
         self.notifications = notifications
     }
@@ -149,7 +152,8 @@ public final class DeviceViewModel: Identifiable, Hashable {
     func setAlbumArt(_ data: Data?) {
         guard data != albumArtData else { return }
         albumArtData = data
-        albumArt = data.flatMap(NSImage.init(data:))
+        // Drawn at most about 60 pt; decoded once at that size.
+        albumArt = data.flatMap { ImageCache.image($0, maxPixels: 256) }
     }
 
     public var hasNowPlaying: Bool {

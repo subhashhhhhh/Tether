@@ -16,6 +16,13 @@ public protocol UDPDiscoveryDelegate: AnyObject, Sendable {
 public final class UDPDiscoveryService: @unchecked Sendable {
     public static let defaultPort: UInt16 = 1716
     public weak var delegate: UDPDiscoveryDelegate?
+    /// Paired devices, read on `queue`, so the routine announcement can be
+    /// skipped when every one of them is already connected.
+    private var pairedDeviceIds: Set<String> = []
+
+    public func setPairedDeviceIds(_ ids: Set<String>) {
+        queue.async { self.pairedDeviceIds = ids }
+    }
 
     private var socketFD: Int32 = -1
     private var readSource: DispatchSourceRead?
@@ -260,9 +267,15 @@ public final class UDPDiscoveryService: @unchecked Sendable {
         broadcastPresence()
 
         let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + .seconds(15), repeating: .seconds(45))
+        timer.schedule(deadline: .now() + .seconds(15), repeating: .seconds(45), leeway: .seconds(10))
         timer.setEventHandler { [weak self] in
-            self?.broadcastPresence(routine: true)
+            guard let self else { return }
+            // With every paired device connected there's nobody to invite;
+            // pairing a new one starts a full search of its own.
+            if !self.pairedDeviceIds.isEmpty,
+               let delegate = self.delegate,
+               self.pairedDeviceIds.allSatisfy(delegate.isDeviceConnected) { return }
+            self.broadcastPresence(routine: true)
         }
         timer.resume()
         self.broadcastTimer = timer

@@ -50,7 +50,11 @@ public struct SMSMessage: Identifiable, Sendable, Equatable {
     public var phoneId: Int64? = nil
 
     /// What names this message on the phone, as KDE Connect desktop keys it.
-    public var phoneKey: String? { phoneId.map { "\($0)@\(Int64(date.timeIntervalSince1970 * 1000))" } }
+    public struct PhoneKey: Hashable, Sendable {
+        let id: Int64
+        let milliseconds: Int64
+    }
+    public var phoneKey: PhoneKey? { phoneId.map { PhoneKey(id: $0, milliseconds: Int64(date.timeIntervalSince1970 * 1000)) } }
 
     /// Android's message box: 1 inbox, 2 sent, 4 outbox, 5 failed, 6
     /// queued. Everything but the inbox was written on the phone.
@@ -95,7 +99,7 @@ public struct SMSMessage: Identifiable, Sendable, Equatable {
         self.attachments = attachments
     }
 
-    public static func from(dictionary dict: [String: Any]) -> SMSMessage? {
+    nonisolated public static func from(dictionary dict: [String: Any]) -> SMSMessage? {
         let body = (dict["body"] as? String) ?? ""
         let event = integer(dict["event"]).map(Int.init) ?? 1
         let type = integer(dict["type"]).map(Int.init) ?? 1
@@ -158,7 +162,7 @@ public struct SMSMessage: Identifiable, Sendable, Equatable {
 
     /// A number from the phone's JSON, which may arrive as Int, Int64,
     /// NSNumber or a string.
-    private static func integer(_ value: Any?) -> Int64? {
+    nonisolated private static func integer(_ value: Any?) -> Int64? {
         switch value {
         case let int as Int: Int64(int)
         case let int64 as Int64: int64

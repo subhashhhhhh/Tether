@@ -104,6 +104,7 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, MDNSDi
         mdnsDiscovery.start(advertising: DeviceIdentity.shared.toDeviceInfo(tcpPort: Int(tcpListener.activePort)))
         pairedDevicesObserver = trustStore.$pairedDevices.sink { [weak self] devices in
             self?.mdnsDiscovery.setPairedDeviceIds(Set(devices.keys))
+            self?.udpDiscovery.setPairedDeviceIds(Set(devices.keys))
         }
         startTailscaleDiscovery()
         wakeObserver = NSWorkspace.shared.notificationCenter

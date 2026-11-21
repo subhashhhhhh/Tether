@@ -62,8 +62,6 @@ public final class MacMediaPlugin: TetherPlugin, @unchecked Sendable {
     }
 
     private func handle(_ packet: NetworkPacket, from connection: DeviceConnection) {
-        let fields = packet.body.filter { $0.key != "player" }.map { "\($0.key)=\($0.value.value)" }.sorted()
-        TetherLog("[MacMedia] Request: \(fields.joined(separator: ", "))")
         if packet.bool(for: "requestPlayerList") || packet.string(for: "player") != Self.playerName {
             TetherLog("[MacMedia] \(connection.peerDeviceInfo?.deviceName ?? "Phone") asked for this Mac's players")
             connection.send(packet: NetworkPacket(type: Self.reportType, body: [

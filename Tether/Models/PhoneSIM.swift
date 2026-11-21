@@ -21,8 +21,14 @@ public struct PhoneSIM: Identifiable, Hashable, Sendable {
 enum SIMNames {
     static let key = "tether_sim_names"
 
+    /// Decoded once per stored value: labels are read on every redraw.
+    private static var lastDecoded: (json: String, names: [String: String])?
+
     static func decode(_ json: String) -> [String: String] {
-        (try? JSONDecoder().decode([String: String].self, from: Data(json.utf8))) ?? [:]
+        if let lastDecoded, lastDecoded.json == json { return lastDecoded.names }
+        let names = (try? JSONDecoder().decode([String: String].self, from: Data(json.utf8))) ?? [:]
+        lastDecoded = (json, names)
+        return names
     }
 
     static func label(for sim: PhoneSIM, deviceId: String, in json: String) -> String {

@@ -426,7 +426,8 @@ private struct MessageList: View {
     private var entries: [Entry] {
         var result: [Entry] = []
         var previous: SMSMessage?
-        for message in thread.messages.sorted(by: { $0.date < $1.date }) {
+        // The plugin keeps each thread sorted oldest first.
+        for message in thread.messages {
             let isNewStretch = previous.map {
                 message.date.timeIntervalSince($0.date) > Self.stampGap
                     || !Calendar.current.isDate(message.date, inSameDayAs: $0.date)
@@ -583,16 +584,10 @@ private struct AttachmentView: View {
     let attachment: SMSAttachment
     let open: () -> Void
 
-    private static let thumbnails = NSCache<NSString, NSImage>()
-
-    /// Decoded once per attachment, not on every redraw.
+    /// The phone's preview, decoded once per attachment.
     private var thumbnail: NSImage? {
-        let key = attachment.uniqueIdentifier as NSString
-        if let cached = Self.thumbnails.object(forKey: key) { return cached }
-        guard let encoded = attachment.encodedThumbnail, let data = Data(base64Encoded: encoded),
-              let image = NSImage(data: data) else { return nil }
-        Self.thumbnails.setObject(image, forKey: key)
-        return image
+        guard let encoded = attachment.encodedThumbnail, let data = Data(base64Encoded: encoded) else { return nil }
+        return ImageCache.image(data, key: attachment.uniqueIdentifier, maxPixels: 400)
     }
 
     private var kind: String {

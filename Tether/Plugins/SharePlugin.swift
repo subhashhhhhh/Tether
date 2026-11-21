@@ -331,7 +331,7 @@ public final class SharePlugin: ObservableObject, TetherPlugin, @unchecked Senda
         // Through the clipboard plugin, so it isn't sent straight back to
         // the phone as a clipboard change, and joins the phone's recent copies.
         TetherService.shared.clipboardPlugin.acceptShared(text, from: deviceId)
-        TetherLog("[SharePlugin] Received shared text from \(deviceName): \(text.prefix(50))...")
+        TetherLog("[SharePlugin] Received shared text (\(text.count) characters) from \(deviceName)")
 
         let content = UNMutableNotificationContent()
         content.title = "Text Received from \(deviceName)"
@@ -354,7 +354,7 @@ public final class SharePlugin: ObservableObject, TetherPlugin, @unchecked Senda
         } else {
             TetherLog("[SharePlugin] Not opening a \(url.scheme ?? "schemeless") link from \(deviceName)")
         }
-        TetherLog("[SharePlugin] Received shared URL from \(deviceName): \(url.absoluteString)")
+        TetherLog("[SharePlugin] Received a \(url.scheme ?? "schemeless") link from \(deviceName)")
 
         let content = UNMutableNotificationContent()
         content.title = "Link Received from \(deviceName)"

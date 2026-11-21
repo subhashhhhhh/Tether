@@ -31,6 +31,9 @@ public final class TetherAppModel {
     public static let shared = TetherAppModel()
 
     public var connectedDevices: [DeviceViewModel] = []
+    /// The SMS revision each device view model's threads were last built
+    /// from; per view model, since one can be replaced by a fresh one.
+    @ObservationIgnored private var smsRevisionSeen: [ObjectIdentifier: Int] = [:]
     public var availableDevices: [DeviceViewModel] = []
     public var offlineDevices: [DeviceViewModel] = []
     public var incomingPairRequest: PairRequestViewModel?
@@ -128,8 +131,10 @@ public final class TetherAppModel {
         ]
         // objectWillChange fires before the value lands; hop a runloop turn and
         // coalesce bursts (a single SMS sync can publish hundreds of times).
+        // A throttle, not a debounce: a steady stream (a transfer's progress)
+        // never pauses long enough for a debounce to fire.
         Publishers.MergeMany(pluginChanges)
-            .debounce(for: .milliseconds(30), scheduler: DispatchQueue.main)
+            .throttle(for: .milliseconds(50), scheduler: DispatchQueue.main, latest: true)
             .sink { [weak self] in self?.updateDevicePluginStates() }
             .store(in: &cancellables)
     }
@@ -180,7 +185,7 @@ public final class TetherAppModel {
 
         for (pairedId, paired) in trustStore.pairedDevices where !connectedIds.contains(pairedId) && !unverifiedIds.contains(pairedId) {
             let vm = device(id: pairedId, name: paired.deviceName, type: paired.deviceType, status: .offline)
-            vm.lastSeen = paired.lastSeenDate
+            if vm.lastSeen != paired.lastSeenDate { vm.lastSeen = paired.lastSeenDate }
             vm.onUnpair = { [weak self] in self?.unpair(deviceId: pairedId) }
             offline.append(vm)
         }
@@ -226,9 +231,12 @@ public final class TetherAppModel {
 
         vm.onPing = { service.sendPing(to: deviceId) }
         vm.onSendClipboard = {
-            if let text = NSPasteboard.general.string(forType: .string) {
-                service.clipboardPlugin.broadcastClipboard(content: text)
-            }
+            // To this device only, and even with clipboard sync off: it was
+            // asked for. Broadcasting reached every phone but this one when
+            // its sync was off.
+            guard let text = NSPasteboard.general.string(forType: .string),
+                  let conn = service.connection(for: deviceId) else { return }
+            service.clipboardPlugin.send(text, to: conn)
         }
         vm.onCopyReceivedClipboard = { service.clipboardPlugin.copyReceived($0) }
         vm.onCancelTransfer = { service.sharePlugin.cancelTransfer(id: $0) }
@@ -273,9 +281,7 @@ public final class TetherAppModel {
         }
         vm.onLoadEarlierMessages = { threadId in
             guard let conn = service.connectedDevices[deviceId] else { return }
-            DispatchQueue.global(qos: .userInitiated).async {
-                service.smsPlugin.requestEarlierMessages(threadId: threadId, connection: conn)
-            }
+            service.smsPlugin.requestEarlierMessages(threadId: threadId, connection: conn)
         }
         vm.onSetVolume = { val in service.setPhoneVolume(Int(val * 100), deviceId: deviceId) }
         vm.onMediaAction = { action in service.mediaAction(action, deviceId: deviceId) }
@@ -316,7 +322,13 @@ public final class TetherAppModel {
                 .map { PhoneSIM(id: $1.key, number: $0 + 1, networkType: $1.value.shortLabel) }
             update(dev, \.sims, sims)
             update(dev, \.transfers, service.sharePlugin.transfers.filter { $0.deviceId == id })
-            update(dev, \.smsThreads, (service.smsPlugin.conversations[id] ?? [:]).values.sorted { $0.lastDate > $1.lastDate })
+            // Sorted only when texts changed: this runs on every plugin change.
+            if smsRevisionSeen[ObjectIdentifier(dev)] != service.smsPlugin.revision {
+                smsRevisionSeen[ObjectIdentifier(dev)] = service.smsPlugin.revision
+                let threads = (service.smsPlugin.conversations[id] ?? [:]).values.sorted { $0.lastDate > $1.lastDate }
+                update(dev, \.smsThreads, threads)
+                update(dev, \.unreadMessageCount, threads.reduce(0) { $0 + $1.unreadCount })
+            }
             update(dev, \.contacts, service.contactsPlugin.books[id] ?? ContactBook())
             update(dev, \.commands, service.runCommandPlugin.commands)
             update(dev, \.notifications, service.notificationPlugin.notifications[id] ?? [])

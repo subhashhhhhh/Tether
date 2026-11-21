@@ -148,7 +148,7 @@ public final class ContactsPlugin: ObservableObject, TetherPlugin, @unchecked Se
 
     private func publish(_ deviceId: String) {
         let book = working[deviceId]
-        DispatchQueue.main.async { self.books[deviceId] = book }
+        DispatchQueue.main.async { if self.books[deviceId] != book { self.books[deviceId] = book } }
     }
 
     // MARK: - Files

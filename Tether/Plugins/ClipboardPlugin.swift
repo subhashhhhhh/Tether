@@ -87,7 +87,7 @@ public final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked S
 
         lastSentContent = text
         lastLocalClipboardTimestamp = Int64(Date().timeIntervalSince1970 * 1000)
-        TetherLog("[ClipboardPlugin] Local clipboard changed: \(text.prefix(30))... Broadcasting to paired devices")
+        TetherLog("[ClipboardPlugin] Local clipboard changed (\(text.count) characters); sending to paired devices")
         broadcastClipboard(content: text)
     }
 
@@ -150,7 +150,7 @@ public final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked S
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(content, forType: .string)
             self.lastChangeCount = NSPasteboard.general.changeCount
-            TetherLog("[ClipboardPlugin] Synced clipboard from \(connection.peerDeviceInfo?.deviceName ?? "Device"): \(content.prefix(30))...")
+            TetherLog("[ClipboardPlugin] Synced clipboard (\(content.count) characters) from \(connection.peerDeviceInfo?.deviceName ?? "Device")")
         }
     }
 
@@ -201,6 +201,12 @@ public final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked S
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(content, forType: .string)
         lastChangeCount = NSPasteboard.general.changeCount
+    }
+
+    /// Sends text to one device, as Send Clipboard does.
+    public func send(_ content: String, to connection: DeviceConnection) {
+        lastSentContent = content
+        connection.send(packet: NetworkPacket(type: "kdeconnect.clipboard", body: ["content": content]))
     }
 
     public func broadcastClipboard(content: String) {

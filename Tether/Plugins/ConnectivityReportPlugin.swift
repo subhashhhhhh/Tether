@@ -65,7 +65,9 @@ public final class ConnectivityReportPlugin: ObservableObject, TetherPlugin, @un
         }
 
         // Prefer whichever subscription has the best signal.
-        signalStrength[deviceId] = parsed.values.max { $0.strength < $1.strength }
-        subscriptions[deviceId] = parsed
+        // Only on change: every write here makes the window recompute.
+        let best = parsed.values.max { $0.strength < $1.strength }
+        if signalStrength[deviceId] != best { signalStrength[deviceId] = best }
+        if subscriptions[deviceId] != parsed { subscriptions[deviceId] = parsed }
     }
 }

@@ -131,6 +131,11 @@ public final class DeviceConnection: @unchecked Sendable {
     private var readSource: DispatchSourceRead?
     private let connectionQueue: DispatchQueue
     private var readBuffer = Data()
+    /// How far readBuffer has been searched for a line end, so a large packet
+    /// arriving in pieces is scanned once, not once per piece.
+    private var scannedBytes = 0
+    /// Reused for every read on the connection's queue.
+    private var readChunk = [UInt8](repeating: 0, count: 64 * 1024)
     private var isEncrypted = false
     private let lock = NSLock()
     private var isClosed = false
@@ -337,13 +342,12 @@ public final class DeviceConnection: @unchecked Sendable {
         guard let ctx = sslContext, !isClosed else { return }
 
         while true {
-            var buffer = [UInt8](repeating: 0, count: 8192)
             var bytesRead: Int = 0
-            let status = SSLRead(ctx, &buffer, buffer.count, &bytesRead)
+            let status = SSLRead(ctx, &readChunk, readChunk.count, &bytesRead)
 
             if bytesRead > 0 {
                 lock.withLock {
-                    readBuffer.append(buffer, count: bytesRead)
+                    readBuffer.append(readChunk, count: bytesRead)
                 }
                 processReadBuffer()
                 // Whatever is left is an incomplete packet. If it is already too big
@@ -382,13 +386,17 @@ public final class DeviceConnection: @unchecked Sendable {
     private func processReadBuffer() {
         var linesToProcess: [Data] = []
         lock.withLock {
-            while let newlineIndex = readBuffer.firstIndex(of: UInt8(ascii: "\n")) {
-                let lineData = readBuffer.subdata(in: 0..<newlineIndex)
-                readBuffer.removeSubrange(0...newlineIndex)
-                if !lineData.isEmpty {
-                    linesToProcess.append(lineData)
-                }
+            // Only bytes not yet searched, and what's been read is removed
+            // once at the end rather than shifting the buffer per line.
+            var lineStart = readBuffer.startIndex
+            var searchFrom = readBuffer.startIndex + scannedBytes
+            while let newline = readBuffer[searchFrom...].firstIndex(of: UInt8(ascii: "\n")) {
+                if newline > lineStart { linesToProcess.append(readBuffer.subdata(in: lineStart..<newline)) }
+                lineStart = newline + 1
+                searchFrom = lineStart
             }
+            readBuffer.removeSubrange(readBuffer.startIndex..<lineStart)
+            scannedBytes = readBuffer.count
         }
 
         for lineData in linesToProcess {

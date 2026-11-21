@@ -57,7 +57,7 @@ public final class RemoteVolumePlugin: ObservableObject, TetherPlugin, @unchecke
         // Full list refresh.
         let listed = packet.objectArray(for: "sinkList")
         if !listed.isEmpty {
-            sinks[deviceId] = listed.map { entry in
+            let list = listed.map { entry in
                 AudioSink(
                     name: entry["name"] as? String ?? "",
                     description: entry["description"] as? String ?? "",
@@ -67,6 +67,7 @@ public final class RemoteVolumePlugin: ObservableObject, TetherPlugin, @unchecke
                     enabled: entry["enabled"] as? Bool ?? true
                 )
             }
+            if sinks[deviceId] != list { sinks[deviceId] = list }
             return
         }
 
@@ -87,7 +88,7 @@ public final class RemoteVolumePlugin: ObservableObject, TetherPlugin, @unchecke
             maxVolume: existing.maxVolume,
             enabled: existing.enabled
         )
-        sinks[deviceId] = deviceSinks
+        if sinks[deviceId] != deviceSinks { sinks[deviceId] = deviceSinks }
     }
 
     public func requestSinks(connection: DeviceConnection) {

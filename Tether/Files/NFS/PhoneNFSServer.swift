@@ -139,7 +139,7 @@ actor PhoneNFSServer {
         let port = try await rpc.start()
         Task { [weak self] in
             while let self, await self.logActivity() {
-                try? await Task.sleep(for: .seconds(10))
+                try? await Task.sleep(for: .seconds(10), tolerance: .seconds(5))
             }
         }
         return port

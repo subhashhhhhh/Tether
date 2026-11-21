@@ -80,7 +80,9 @@ struct NotificationsPane: View {
             .scrollContentBackground(.hidden)
             .noTopScrollEdge()
             .readableCardList()
-            .animation(.default, value: device.notifications)
+            // Animates on which notifications there are, without comparing
+            // every notification's text and picture on each redraw.
+            .animation(.default, value: device.notifications.map(\.id))
             // It clears the phone's notification shade too, so it asks first.
             .confirmationDialog("Dismiss all notifications on \(device.name)?", isPresented: $isConfirmingDismissAll) {
                 Button("Dismiss All", role: .destructive) {
@@ -292,15 +294,8 @@ struct NotificationAppIcon: View {
     let glyph: Data?
     var size: CGFloat = 20
 
-    private static let images = NSCache<NSData, NSImage>()
-
     /// Decoded once per picture, not on every redraw.
-    static func image(_ data: Data) -> NSImage? {
-        if let cached = images.object(forKey: data as NSData) { return cached }
-        guard let image = NSImage(data: data) else { return nil }
-        images.setObject(image, forKey: data as NSData)
-        return image
-    }
+    static func image(_ data: Data) -> NSImage? { ImageCache.image(data, maxPixels: 96) }
 
     /// Nothing until the phone has sent the app's glyph: the name beside it
     /// already says which app it is.

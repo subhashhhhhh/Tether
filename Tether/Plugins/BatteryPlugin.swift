@@ -6,7 +6,7 @@
 import Foundation
 import Combine
 
-public struct DeviceBatteryInfo: Sendable {
+public struct DeviceBatteryInfo: Sendable, Equatable {
     public let currentCharge: Int // 0 - 100
     public let isCharging: Bool
     public let thresholdBatteryEvent: Int?
@@ -88,7 +88,7 @@ public final class BatteryPlugin: ObservableObject, TetherPlugin, @unchecked Sen
 
         UserDefaults.standard.set(["charge": charge, "charging": isCharging], forKey: Self.key(deviceId))
         DispatchQueue.main.async {
-            self.deviceBatteries[deviceId] = info
+            if self.deviceBatteries[deviceId] != info { self.deviceBatteries[deviceId] = info }
         }
     }
 

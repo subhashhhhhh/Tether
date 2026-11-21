@@ -399,6 +399,7 @@ public final class PayloadUploader: @unchecked Sendable {
 
         var sent: Int64 = 0
         var lastProgress = Date()
+        var lastReported = 0.0
         while sent < size {
             if stateLock.withLock({ isFinished || isCancelRequested }) {
                 finish(with: .failure(PayloadError.cancelled), onComplete: onComplete)
@@ -428,7 +429,13 @@ public final class PayloadUploader: @unchecked Sendable {
                 return
             }
             lastProgress = now
-            onProgress(Double(sent) / Double(size))
+            // Whole percents, as downloads report: every 64 KB chunk was a
+            // main-thread hop and two published writes.
+            let fraction = Double(sent) / Double(size)
+            if fraction - lastReported >= 0.01 || sent == size {
+                lastReported = fraction
+                onProgress(fraction)
+            }
         }
 
         guard sent == size else {

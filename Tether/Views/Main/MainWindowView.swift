@@ -8,6 +8,7 @@
 
 import SwiftUI
 import AppKit
+import UserNotifications
 
 enum DeviceSection: String, CaseIterable, Identifiable {
     case overview, messages, notifications, files, commands
@@ -75,7 +76,12 @@ enum DockPresence {
         // The Dock creates the icon a moment after the switch, and a badge
         // set before then is lost; it's set again once the app is active.
         observeActivation()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { applyBadge() }
+        // The Dock takes a second or two to have the icon ready, and ignores
+        // the same label set again, so the badge is cleared and set a few
+        // times while the icon appears.
+        for delay in [0.5, 1.5, 3.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { applyBadge(redraw: true) }
+        }
     }
 
     private static var activationObserver: NSObjectProtocol?
@@ -85,7 +91,7 @@ enum DockPresence {
         activationObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { _ in
-            MainActor.assumeIsolated { applyBadge() }
+            MainActor.assumeIsolated { applyBadge(redraw: true) }
         }
     }
 
@@ -107,11 +113,15 @@ enum DockPresence {
         applyBadge()
     }
 
-    private static func applyBadge() {
+    private static func applyBadge(redraw: Bool = false) {
         guard NSApp.activationPolicy() == .regular else { return }
+        if redraw { NSApp.dockTile.badgeLabel = nil }
         NSApp.dockTile.badgeLabel = badgeCount > 0 ? String(badgeCount) : nil
         NSApp.dockTile.display()
-        TetherLog("[Dock] Badge \(badgeCount)")
+        let label = NSApp.dockTile.badgeLabel ?? "nil"
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            TetherLog("[Dock] Badge \(badgeCount); tile label \(label); badges allowed: \(settings.badgeSetting.rawValue) (2 = on); authorization \(settings.authorizationStatus.rawValue); bundle \(Bundle.main.bundlePath)")
+        }
     }
 }
 
@@ -144,7 +154,7 @@ public struct MainWindowView: View {
     /// Phone notifications and unread texts, across connected devices.
     private var dockBadgeCount: Int {
         appModel.connectedDevices.reduce(0) { total, device in
-            total + device.notifications.count + device.smsThreads.reduce(0) { $0 + $1.unreadCount }
+            total + device.notifications.count + device.unreadMessageCount
         }
     }
 
@@ -336,7 +346,7 @@ struct DeviceSidebar: View {
     private func badgeCount(for section: DeviceSection, device: DeviceViewModel) -> Int {
         switch section {
         case .notifications: device.notifications.count
-        case .messages: device.smsThreads.reduce(0) { $0 + $1.unreadCount }
+        case .messages: device.unreadMessageCount
         case .files: device.activeTransferCount
         case .overview, .commands: 0
         }

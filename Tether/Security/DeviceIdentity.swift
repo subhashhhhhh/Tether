@@ -132,10 +132,12 @@ public final class DeviceIdentity: @unchecked Sendable {
                 let fresh = newPassphrase()
                 if FileManager.default.fileExists(atPath: paths.key.path) {
                     exportPKCS12(paths: paths, passphrase: fresh)
-                    if importPKCS12((try? Data(contentsOf: paths.p12)) ?? Data(), passphrase: fresh) != nil {
-                        writePassphrase(fresh, paths: paths)
-                    } else {
-                        // Re-wrap failed; put the working bundle back untouched.
+                    // The bundle and its passphrase change together, or not
+                    // at all: a new bundle with the old passphrase on disk
+                    // couldn't be opened at the next launch.
+                    let reopened = importPKCS12((try? Data(contentsOf: paths.p12)) ?? Data(), passphrase: fresh) != nil
+                    if !reopened || !writePassphrase(fresh, paths: paths) {
+                        TetherLog("[DeviceIdentity] Couldn't re-wrap the identity; keeping the old one")
                         try? p12Data.write(to: paths.p12, options: .atomic)
                     }
                 }
@@ -221,19 +223,30 @@ public final class DeviceIdentity: @unchecked Sendable {
             return stored
         }
         let fresh = newPassphrase()
-        writePassphrase(fresh, paths: paths)
+        if !writePassphrase(fresh, paths: paths) {
+            TetherLog("[DeviceIdentity] Couldn't save the identity's passphrase")
+        }
         return fresh
     }
 
     private static func newPassphrase() -> String {
         var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess else {
+            // Still random, from the system's UUID source.
+            return UUID().uuidString + UUID().uuidString
+        }
         return Data(bytes).base64EncodedString()
     }
 
-    private static func writePassphrase(_ passphrase: String, paths: Paths) {
-        try? Data(passphrase.utf8).write(to: paths.passphrase, options: .atomic)
+    @discardableResult
+    private static func writePassphrase(_ passphrase: String, paths: Paths) -> Bool {
+        do {
+            try Data(passphrase.utf8).write(to: paths.passphrase, options: .atomic)
+        } catch {
+            return false
+        }
         restrictPermissions(paths: paths)
+        return true
     }
 
     private static func restrictPermissions(paths: Paths) {

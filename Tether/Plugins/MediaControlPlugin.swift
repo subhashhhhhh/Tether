@@ -93,7 +93,7 @@ public final class MediaControlPlugin: ObservableObject, TetherPlugin, @unchecke
         if packet.body["playerList"] != nil {
             let playerList = packet.stringArray(for: "playerList")
             let known = Set(playerStates[deviceId]?.keys.map { $0 } ?? [])
-            players[deviceId] = playerList
+            if players[deviceId] != playerList { players[deviceId] = playerList }
             playerStates[deviceId] = playerStates[deviceId]?.filter { playerList.contains($0.key) }
             if let chosen = chosenPlayer[deviceId], !playerList.contains(chosen) { chosenPlayer[deviceId] = nil }
             // Each player answers for itself, so a new one is asked directly.

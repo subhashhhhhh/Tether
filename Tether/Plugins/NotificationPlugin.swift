@@ -751,7 +751,7 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
                 ]
             )
             connection.send(packet: replyPacket)
-            TetherLog("[NotificationPlugin] Sent notification reply to \(deviceId): \(replyText)")
+            TetherLog("[NotificationPlugin] Sent a notification reply to \(deviceId)")
         } else if response.actionIdentifier == "TETHER_DISMISS_ACTION" {
             if let notifId = userInfo["notifId"] as? String {
                 let dismissPacket = NetworkPacket(
