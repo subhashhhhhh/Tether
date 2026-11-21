@@ -6,8 +6,16 @@ import UserNotifications
 enum NativeNotificationFilter {
     static let whatsAppBundleIdentifier = "net.whatsapp.WhatsApp"
 
+    /// Settings › Notifications. On unless turned off: with WhatsApp for Mac
+    /// open, two banners for one message is the worse default.
+    static let deferToWhatsAppKey = "tether_defer_to_native_whatsapp"
+
+    static var defersToWhatsApp: Bool {
+        UserDefaults.standard.object(forKey: deferToWhatsAppKey) as? Bool ?? true
+    }
+
     static func shouldSuppress(_ item: PhoneNotification) -> Bool {
-        guard isWhatsApp(appName: item.appName, notificationId: item.id) else { return false }
+        guard defersToWhatsApp, isWhatsApp(appName: item.appName, notificationId: item.id) else { return false }
         return NSRunningApplication.runningApplications(withBundleIdentifier: whatsAppBundleIdentifier)
             .contains { !$0.isTerminated }
     }

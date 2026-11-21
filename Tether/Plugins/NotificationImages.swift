@@ -62,6 +62,14 @@ final class NotificationImages {
     /// hash is an opaque protocol cache key, not an authentication mechanism.
     @discardableResult
     func store(_ data: Data, deviceId: String, hash: String?) -> Data? {
+        guard let png = Self.normalized(data) else { return nil }
+        keep(png, deviceId: deviceId, hash: hash)
+        return png
+    }
+
+    /// The decoding and re-encoding half of `store`. It touches nothing
+    /// shared, so it can run off the main thread.
+    nonisolated static func normalized(_ data: Data) -> Data? {
         guard !data.isEmpty, data.count <= Self.maximumPayloadSize,
               let source = CGImageSourceCreateWithData(data as CFData, nil),
               CGImageSourceGetType(source) as String? == UTType.png.identifier,
@@ -75,7 +83,11 @@ final class NotificationImages {
         guard let destination = CGImageDestinationCreateWithData(output, UTType.png.identifier as CFString, 1, nil) else { return nil }
         CGImageDestinationAddImage(destination, image, nil)
         guard CGImageDestinationFinalize(destination) else { return nil }
-        let png = output as Data
+        return output as Data
+    }
+
+    /// Retains a picture that `normalized` produced.
+    func keep(_ png: Data, deviceId: String, hash: String?) {
         if let hash, !hash.isEmpty {
             let key = key(deviceId: deviceId, hash: hash)
             cache.setObject(png as NSData, forKey: key, cost: png.count)
@@ -83,7 +95,6 @@ final class NotificationImages {
                 Self.ioQueue.async { try? png.write(to: url, options: .atomic) }
             }
         }
-        return png
     }
 
     /// Forgets every picture, in memory and on disk. Waits for the disk, so

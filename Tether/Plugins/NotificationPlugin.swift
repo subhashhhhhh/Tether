@@ -66,12 +66,19 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
     private var imageTracker = NotificationImageTracker()
 
     private var activeConnections: [String: DeviceConnection] = [:]
+    /// Devices whose notifications are being mirrored right now.
+    private var syncingDevices: Set<String> = []
+    private var settingsObserver: AnyCancellable?
 
     public override init() {
         super.init()
         setupNotificationCategories()
         UNUserNotificationCenter.current().delegate = self
         requestPermission()
+        // "Show phone notifications" can change while the phone is connected.
+        settingsObserver = TrustStore.shared.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.applySyncSettings() }
     }
 
     private func requestPermission() {
@@ -98,8 +105,16 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
             options: [.destructive]
         )
 
+        // Reply is offered only where the phone offered it; typing into a
+        // field that goes nowhere loses the text.
         let category = UNNotificationCategory(
-            identifier: "TETHER_NOTIFICATION_CATEGORY",
+            identifier: Self.plainCategory,
+            actions: [dismissAction],
+            intentIdentifiers: [],
+            options: []
+        )
+        let replyCategory = UNNotificationCategory(
+            identifier: Self.replyCategory,
             actions: [replyAction, dismissAction],
             intentIdentifiers: [],
             options: []
@@ -131,7 +146,13 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
         )
 
         let codeCategory = UNNotificationCategory(
-            identifier: "TETHER_CODE_CATEGORY",
+            identifier: Self.codeCategory,
+            actions: [copyCodeAction, dismissAction],
+            intentIdentifiers: [],
+            options: []
+        )
+        let codeReplyCategory = UNNotificationCategory(
+            identifier: Self.codeReplyCategory,
             actions: [copyCodeAction, replyAction, dismissAction],
             intentIdentifiers: [],
             options: []
@@ -150,30 +171,92 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
             options: []
         )
 
-        UNUserNotificationCenter.current().setNotificationCategories([category, codeCategory, pairCategory, callCategory])
+        UNUserNotificationCenter.current().setNotificationCategories(
+            [category, replyCategory, codeCategory, codeReplyCategory, pairCategory, callCategory])
+    }
+
+    static let plainCategory = "TETHER_NOTIFICATION_CATEGORY"
+    static let replyCategory = "TETHER_REPLY_CATEGORY"
+    static let codeCategory = "TETHER_CODE_CATEGORY"
+    static let codeReplyCategory = "TETHER_CODE_REPLY_CATEGORY"
+
+    static func category(hasCode: Bool, hasReply: Bool) -> String {
+        switch (hasCode, hasReply) {
+        case (false, false): plainCategory
+        case (false, true): replyCategory
+        case (true, false): codeCategory
+        case (true, true): codeReplyCategory
+        }
     }
 
     public func onConnected(connection: DeviceConnection) {
         guard let deviceId = connection.peerDeviceInfo?.deviceId,
-              let paired = TrustStore.shared.pairedDevice(for: deviceId),
-              paired.isNotificationSyncEnabled else {
+              let paired = TrustStore.shared.pairedDevice(for: deviceId) else {
             return
         }
+        // Kept even with mirroring off, so turning it on later works without
+        // a reconnect.
         activeConnections[deviceId] = connection
         loadGlyphsIfNeeded(for: deviceId)
+        if paired.isNotificationSyncEnabled { startSync(deviceId: deviceId, connection: connection) }
+    }
 
-        // Request active notifications from remote phone
-        let requestPacket = NetworkPacket(
+    private func startSync(deviceId: String, connection: DeviceConnection) {
+        syncingDevices.insert(deviceId)
+        connection.send(packet: NetworkPacket(
             type: "kdeconnect.notification.request",
             body: ["request": true]
-        )
-        connection.send(packet: requestPacket)
+        ))
+        // The phone answers with everything it is showing. Once that's in,
+        // a banner for anything else was dismissed while we were apart.
+        let connectionId = ObjectIdentifier(connection)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
+            guard let self, self.activeConnections[deviceId].map(ObjectIdentifier.init) == connectionId,
+                  self.syncingDevices.contains(deviceId) else { return }
+            self.removeDeliveredBanners(deviceId: deviceId, keepingListed: true)
+        }
+    }
+
+    /// Follows "Show phone notifications" being switched while connected.
+    private func applySyncSettings() {
+        for (deviceId, connection) in activeConnections {
+            let enabled = TrustStore.shared.pairedDevice(for: deviceId)?.isNotificationSyncEnabled == true
+            if enabled, !syncingDevices.contains(deviceId) {
+                startSync(deviceId: deviceId, connection: connection)
+            } else if !enabled, syncingDevices.remove(deviceId) != nil {
+                imageTracker.removeDevice(deviceId)
+                notifications[deviceId] = nil
+                removeDeliveredBanners(deviceId: deviceId, keepingListed: false)
+            }
+        }
+    }
+
+    /// Takes this device's banners out of Notification Center: all of them,
+    /// or only those the phone is no longer showing.
+    private func removeDeliveredBanners(deviceId: String, keepingListed: Bool) {
+        let prefix = Self.identifier(deviceId: deviceId, id: "")
+        UNUserNotificationCenter.current().getDeliveredNotifications { delivered in
+            let identifiers = delivered.map(\.request.identifier).filter { $0.hasPrefix(prefix) }
+            guard !identifiers.isEmpty else { return }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                // Read here, not before the fetch, so one that arrived meanwhile is kept.
+                let listed = keepingListed
+                    ? Set((self.notifications[deviceId] ?? []).map { Self.identifier(deviceId: deviceId, id: $0.id) })
+                    : []
+                let stale = identifiers.filter { !listed.contains($0) }
+                guard !stale.isEmpty else { return }
+                UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: stale)
+                TetherLog("[NotificationPlugin] Removed \(stale.count) banner(s) no longer on the phone")
+            }
+        }
     }
 
     public func onDisconnected(connection: DeviceConnection) {
         if let deviceId = connection.peerDeviceInfo?.deviceId {
             if activeConnections[deviceId] === connection {
                 activeConnections.removeValue(forKey: deviceId)
+                syncingDevices.remove(deviceId)
                 imageTracker.removeDevice(deviceId)
                 // The artwork cache stays: after a reconnect the phone names
                 // pictures it already sent by hash and doesn't send them again.
@@ -309,6 +392,9 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
         )
         rememberGlyph(of: item)
         var list = notifications[deviceId] ?? []
+        // Android marks a notification that should alert once and then
+        // update quietly: a download's progress, a timer, a call in progress.
+        let isQuietUpdate = packet.bool(for: "onlyOnce") && list.contains { $0.id == notifId }
         list.removeAll { $0.id == notifId }
         list.insert(item, at: 0)
         list.sort { $0.date > $1.date }
@@ -316,12 +402,12 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
 
         let key = NotificationImageTracker.Key(deviceId: deviceId, notificationId: notifId)
         let suppressNativeDuplicate = NativeNotificationFilter.shouldSuppress(item)
-        let waitForImage = !silent && !suppressNativeDuplicate && item.imageData == nil && Self.expectsImage(packet)
+        let waitForImage = !silent && !isQuietUpdate && !suppressNativeDuplicate && item.imageData == nil && Self.expectsImage(packet)
         let token = imageTracker.begin(key, packetId: packet.id, hash: packet.string(for: "payloadHash"), waiting: waitForImage)
 
         // Silent initial sync still populates the list and image cache.
         // Also keep mirrored WhatsApp items without duplicating native alerts.
-        if silent || suppressNativeDuplicate { return }
+        if silent || isQuietUpdate || suppressNativeDuplicate { return }
 
         if let code = item.code, UserDefaults.standard.bool(forKey: OneTimeCode.autoCopyKey) {
             Self.copyToPasteboard(code)
@@ -361,16 +447,33 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
               let id = packet.string(for: "id") else { return }
         let key = NotificationImageTracker.Key(deviceId: deviceId, notificationId: id)
         guard let token = imageTracker.token(for: key, packetId: packet.id, hash: packet.string(for: "payloadHash")) else { return }
-        if let size = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
-           size > 0, size <= NotificationImages.maximumPayloadSize,
-           let data = try? Data(contentsOf: fileURL),
-           let png = images.store(data, deviceId: deviceId, hash: packet.string(for: "payloadHash")),
-           let index = notifications[deviceId]?.firstIndex(where: { $0.id == id }) {
-            notifications[deviceId]?[index].imageData = png
-            if let item = notifications[deviceId]?[index] { rememberGlyph(of: item) }
+        // The file is removed when this returns, so it's read here (it is
+        // at most 1 MB). Decoding and re-encoding it happens off the main thread.
+        guard let size = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              size > 0, size <= NotificationImages.maximumPayloadSize,
+              let data = try? Data(contentsOf: fileURL) else {
+            finishWaiting(key, token: token)
+            return
         }
-        finishWaiting(key, token: token)
+        let hash = packet.string(for: "payloadHash")
+        let connectionId = ObjectIdentifier(connection)
+        Self.imageQueue.async {
+            let png = NotificationImages.normalized(data)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.activeConnections[deviceId].map(ObjectIdentifier.init) == connectionId else { return }
+                if let png {
+                    self.images.keep(png, deviceId: deviceId, hash: hash)
+                    if let index = self.notifications[deviceId]?.firstIndex(where: { $0.id == id }) {
+                        self.notifications[deviceId]?[index].imageData = png
+                        if let item = self.notifications[deviceId]?[index] { self.rememberGlyph(of: item) }
+                    }
+                }
+                self.finishWaiting(key, token: token)
+            }
+        }
     }
+
+    private static let imageQueue = DispatchQueue(label: "com.subhashh.tether.notification-decode", qos: .userInitiated)
 
     public func handlePayloadFailure(connection: DeviceConnection, packet: NetworkPacket, error: Error) {
         guard let deviceId = connection.peerDeviceInfo?.deviceId,
@@ -401,7 +504,7 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
         content.title = item.title.isEmpty ? item.appName : "\(item.appName): \(item.title)"
         content.body = item.text
         content.sound = .default
-        content.categoryIdentifier = item.code == nil ? "TETHER_NOTIFICATION_CATEGORY" : "TETHER_CODE_CATEGORY"
+        content.categoryIdentifier = Self.category(hasCode: item.code != nil, hasReply: item.replyId != nil)
         content.userInfo = [
             "deviceId": item.deviceId,
             "notifId": item.id,
@@ -537,6 +640,11 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
 
         guard let deviceId = userInfo["deviceId"] as? String,
               let connection = activeConnections[deviceId] else {
+            // The phone has gone since the banner was shown. A typed reply
+            // must not vanish without a word.
+            if response is UNTextInputNotificationResponse {
+                Self.postReplyNotSent(appName: userInfo["appName"] as? String ?? "")
+            }
             completionHandler()
             return
         }
@@ -566,5 +674,15 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
         }
 
         completionHandler()
+    }
+
+    private static func postReplyNotSent(appName: String) {
+        let content = UNMutableNotificationContent()
+        content.title = "Reply Not Sent"
+        content.body = appName.isEmpty
+            ? "The phone isn't connected. Reply again once it's back."
+            : "The phone isn't connected. Reply in \(appName) once it's back."
+        UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: "tether-reply-not-sent", content: content, trigger: nil))
     }
 }

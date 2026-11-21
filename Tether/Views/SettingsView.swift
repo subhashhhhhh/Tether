@@ -230,6 +230,7 @@ private struct GeneralSettings: View {
     @State private var name = ""
     @AppStorage(MotionPreference.key) private var reduceMotion = false
     @AppStorage(OneTimeCode.autoCopyKey) private var copyCodes = false
+    @AppStorage(NativeNotificationFilter.deferToWhatsAppKey) private var deferToWhatsApp = true
     @AppStorage(CallMediaPauser.settingKey) private var pauseMediaDuringCalls = true
     @AppStorage(CallCard.settingKey) private var showCallCard = true
     @AppStorage(AwayLock.settingKey) private var lockWhenPhoneLeaves = false
@@ -259,6 +260,10 @@ private struct GeneralSettings: View {
                 Toggle(isOn: $copyCodes) {
                     Text("Copy verification codes automatically")
                     Text("When a notification from your phone contains a sign-in code, Tether puts it on the clipboard.")
+                }
+                Toggle(isOn: $deferToWhatsApp) {
+                    Text("Let WhatsApp for Mac show its own alerts")
+                    Text("While WhatsApp is open on this Mac, Tether doesn't show a second banner for the same message. WhatsApp messages still appear in Tether's list.")
                 }
                 Toggle(isOn: $showCallCard) {
                     Text("Show calls in a floating card")
