@@ -64,6 +64,9 @@ public final class MediaControlPlugin: ObservableObject, TetherPlugin, @unchecke
         requestState(connection: connection)
     }
 
+    /// Its state belongs to the device, not the connection, and is kept.
+    public func onConnectionReplaced(old: DeviceConnection, new: DeviceConnection) {}
+
     public func onDisconnected(connection: DeviceConnection) {
         guard let deviceId = connection.peerDeviceInfo?.deviceId else { return }
         nowPlaying.removeValue(forKey: deviceId)

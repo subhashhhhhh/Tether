@@ -20,6 +20,17 @@ nonisolated enum OneTimeCode {
         "login", "log in", "log-in", "sign in", "sign-in", "signin", "confirm",
     ]
 
+    /// A code in one of a notification's buttons, as Google Messages adds
+    /// "Copy 123456". Any 4 to 10 digit run counts, in any language, as the
+    /// desktop app does. The phone puts U+2063 between the digits.
+    static func find(inAction actions: [String]) -> String? {
+        for action in actions {
+            let cleaned = action.replacingOccurrences(of: "\u{2063}", with: "")
+            if let match = matches(#"\b(\d{4,10})\b"#, in: cleaned).first { return match.groups[1] }
+        }
+        return nil
+    }
+
     /// The code in `text`, digits only, or nil.
     static func find(in text: String) -> String? {
         let lower = text.lowercased()

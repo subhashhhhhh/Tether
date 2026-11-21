@@ -22,6 +22,9 @@ public final class PresenterPlugin: TetherPlugin, @unchecked Sendable {
     public init() {}
 
     public func onConnected(connection: DeviceConnection) {}
+
+    /// Its state belongs to the device, not the connection, and is kept.
+    public func onConnectionReplaced(old: DeviceConnection, new: DeviceConnection) {}
     public func onDisconnected(connection: DeviceConnection) {
         Task { @MainActor in
             PresenterOverlayWindowController.shared.hide()

@@ -239,7 +239,9 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, MDNSDi
         reachOutTasks[key] = Task {
             defer { reachOutTasks[key] = nil }
             var elapsed = 0.0
-            for second in [0, 0.5, 1, 1.5, 2, 5, 10, 21, 30, 45] {
+            // More than a second apart: the phone ignores a repeat from the
+            // same address within one.
+            for second in [0, 1.2, 2.5, 5, 10, 21, 30, 45] {
                 try? await Task.sleep(for: .seconds(second - elapsed))
                 elapsed = second
                 guard !Task.isCancelled, !isDeviceConnected(deviceId: deviceId),
@@ -370,8 +372,16 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, MDNSDi
                 if let pairReq = self.incomingPairRequest, pairReq.info.deviceId == id {
                     self.incomingPairRequest = (connection: connection, info: pairReq.info)
                 }
-                self.activatePlugins(for: connection)
-                self.deactivatePlugins(for: old)
+                if connection.pairState == .paired, self.activatedConnections.remove(ObjectIdentifier(old)) != nil {
+                    // A swap, not a new arrival: plugins keep what they know.
+                    self.activatedConnections.insert(ObjectIdentifier(connection))
+                    for plugin in self.plugins {
+                        plugin.onConnectionReplaced(old: old, new: connection)
+                    }
+                } else {
+                    self.activatePlugins(for: connection)
+                    self.deactivatePlugins(for: old)
+                }
                 old.disconnect()
                 return
             }
@@ -460,6 +470,22 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, MDNSDi
             TetherLog("[TetherService] \(packet.type) announced \(size) bytes but no usable payload port: \(String(describing: packet.payloadTransferInfo))")
             return
         }
+        // The phone sends a notification's picture again with each new
+        // notification. One already stored is used as it is, as the desktop
+        // app does; the phone gives up on the transfer after 10 s.
+        if packet.type == "kdeconnect.notification",
+           let hash = packet.string(for: "payloadHash"), !hash.isEmpty,
+           let deviceId = connection.peerDeviceInfo?.deviceId {
+            Task { @MainActor in
+                guard !self.notificationPlugin.hasImage(deviceId: deviceId, hash: hash) else { return }
+                self.fetchPayload(of: packet, size: size, port: port, from: connection)
+            }
+            return
+        }
+        fetchPayload(of: packet, size: size, port: port, from: connection)
+    }
+
+    nonisolated private func fetchPayload(of packet: NetworkPacket, size: Int64, port: UInt16, from connection: DeviceConnection) {
         TetherLog("[TetherService] \(packet.type) announced \(size) bytes; fetching from \(connection.host):\(port)")
 
         PayloadDownloader.download(

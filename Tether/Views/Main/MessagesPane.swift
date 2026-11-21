@@ -92,6 +92,8 @@ struct MessagesPane: View {
             // Each pane decides for itself how far up it reaches.
             .ignoresSafeArea(.container, edges: .top)
             .onAppear {
+                // Catches up on anything missed while the phone was away.
+                device.refreshMessages()
                 if selectedThreadId == nil { selectedThreadId = device.smsThreads.first?.id }
                 if startsComposing { startComposing() }
             }

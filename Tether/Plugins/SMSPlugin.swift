@@ -29,11 +29,15 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
 
     public init() {}
 
-    public func onConnected(connection: DeviceConnection) {
-        requestAllConversations(connection: connection)
-    }
+    /// Nothing is asked for on connect: conversations are requested when
+    /// Messages opens, as KDE Connect desktop does. New messages the phone
+    /// sends as they arrive.
+    public func onConnected(connection: DeviceConnection) {}
 
     public func onDisconnected(connection: DeviceConnection) {}
+
+    /// Its state belongs to the device, not the connection, and is kept.
+    public func onConnectionReplaced(old: DeviceConnection, new: DeviceConnection) {}
 
     public func handlePacket(connection: DeviceConnection, packet: NetworkPacket) {
         if packet.type == Self.messagesType, let deviceId = connection.peerDeviceInfo?.deviceId {

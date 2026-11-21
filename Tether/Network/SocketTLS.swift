@@ -120,7 +120,7 @@ enum SocketTLS {
         }
     }
 
-    /// Notices within about 35 seconds that a phone has vanished without
+    /// Notices within about a minute that a phone has vanished without
     /// closing the connection (Wi-Fi turned off, out of range), so it stops
     /// showing as connected. macOS's defaults take minutes: a probe every 75 s,
     /// 8 times. Probes are only sent while nothing else is flowing, and the
@@ -136,12 +136,16 @@ enum SocketTLS {
             setsockopt(fd, level, option, &value, socklen_t(MemoryLayout<Int32>.size))
         }
         set(SOL_SOCKET, SO_KEEPALIVE, 1)
-        set(IPPROTO_TCP, TCP_KEEPALIVE, 10)  // idle seconds before the first probe
-        set(IPPROTO_TCP, TCP_KEEPINTVL, 5)   // seconds between probes
-        set(IPPROTO_TCP, TCP_KEEPCNT, 5)     // unanswered probes before giving up
+        // KDE Connect desktop's values. Each probe wakes the phone's radio,
+        // so a probe every 10 s of quiet cost its battery. A phone that left
+        // is noticed within a minute; the Mac's own network changes and wakes
+        // are handled at once by redialling.
+        set(IPPROTO_TCP, TCP_KEEPALIVE, 30)  // idle seconds before the first probe
+        set(IPPROTO_TCP, TCP_KEEPINTVL, 10)  // seconds between probes
+        set(IPPROTO_TCP, TCP_KEEPCNT, 3)     // unanswered probes before giving up
         // Keepalive is suspended while sent data is unacknowledged; without this,
         // retransmitting to a vanished phone would keep the connection for minutes.
-        set(IPPROTO_TCP, TCP_RXT_CONNDROPTIME, 35)
+        set(IPPROTO_TCP, TCP_RXT_CONNDROPTIME, 60)
     }
 
     /// SHA-256 fingerprint of the peer's leaf certificate, lowercase hex with colons.

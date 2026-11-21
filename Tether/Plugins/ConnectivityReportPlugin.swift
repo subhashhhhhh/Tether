@@ -41,6 +41,9 @@ public final class ConnectivityReportPlugin: ObservableObject, TetherPlugin, @un
 
     public func onConnected(connection: DeviceConnection) {}
 
+    /// Its state belongs to the device, not the connection, and is kept.
+    public func onConnectionReplaced(old: DeviceConnection, new: DeviceConnection) {}
+
     public func onDisconnected(connection: DeviceConnection) {
         guard let deviceId = connection.peerDeviceInfo?.deviceId else { return }
         signalStrength.removeValue(forKey: deviceId)

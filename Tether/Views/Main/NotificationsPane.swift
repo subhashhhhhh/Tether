@@ -8,10 +8,12 @@ import SwiftUI
 struct NotificationsPane: View {
     let device: DeviceViewModel
     @State private var isConfirmingDismissAll = false
-    /// The list fills the window, so it scrolls anywhere in it and a swiped
-    /// card slides to the edge. The cards keep a margin rather than a fixed
-    /// width, so Dismiss is uncovered right behind a card.
-    static let rowInsets = EdgeInsets(top: 0, leading: 24, bottom: 0, trailing: 24)
+    /// The list fills the window, so it scrolls anywhere in it and its
+    /// scroll bar is at the edge. Rows have no insets of their own: the inset
+    /// list style already keeps each row in from the sides, so a row is
+    /// exactly its card, and a swipe uncovers Dismiss right at the card's
+    /// edge. (`contentMargins` would move the margin, but List ignores it.)
+    static let rowInsets = EdgeInsets()
 
     /// Notifications grouped by app, the app with the newest one first.
     private var groups: [(app: String, items: [PhoneNotification])] {
@@ -36,7 +38,7 @@ struct NotificationsPane: View {
             List {
                 ForEach(groups, id: \.app) { group in
                     HStack(spacing: 8) {
-                        NotificationAppIcon(appName: group.app, glyph: device.appGlyphs[group.app], size: 24)
+                        NotificationAppIcon(appName: group.app, glyph: group.items.first.flatMap(device.glyph(for:)), size: 24)
                         Text(group.app)
                             .font(.title3.weight(.semibold))
                         Spacer()
@@ -76,7 +78,6 @@ struct NotificationsPane: View {
             }
             .listStyle(.inset)
             .scrollContentBackground(.hidden)
-            // No toolbar band over the narrower list's top.
             .noTopScrollEdge()
             .animation(.default, value: device.notifications)
             // It clears the phone's notification shade too, so it asks first.
@@ -147,7 +148,17 @@ private struct NotificationRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            if !notification.text.isEmpty {
+            if notification.isRedacted {
+                RedactedText()
+            } else if !notification.conversation.isEmpty {
+                ConversationText(notification: notification)
+                    .lineLimit(isLong && !isExpanded ? 4 : nil)
+                if isLong {
+                    Button(isExpanded ? "Show Less" : "Show More") { isExpanded.toggle() }
+                        .buttonStyle(.link)
+                        .font(.callout)
+                }
+            } else if !notification.text.isEmpty {
                 // The message is the content, so it isn't greyed out.
                 Text(notification.text)
                     .textSelection(.enabled)
@@ -207,6 +218,64 @@ private struct NotificationRow: View {
         device.reply(to: notification, text: text)
         reply = ""
         isReplying = false
+    }
+}
+
+/// A chat's recent messages, each sender's name in bold where it changes,
+/// as the phone shows them. The first sender is the row's title.
+struct ConversationText: View {
+    let notification: PhoneNotification
+
+    var body: some View {
+        Text(attributed)
+            .textSelection(.enabled)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var attributed: AttributedString {
+        var result = AttributedString()
+        var previous = notification.title
+        for (index, line) in notification.conversation.enumerated() {
+            if index > 0 { result += AttributedString("\n") }
+            if !line.sender.isEmpty, line.sender != previous {
+                var sender = AttributedString(line.sender + ": ")
+                sender.font = .body.weight(.semibold)
+                result += sender
+                previous = line.sender
+            }
+            result += AttributedString(line.content)
+        }
+        return result
+    }
+}
+
+/// What Android 15 shows apps like KDE Connect instead of a notification it
+/// thinks is sensitive, with what can be done about it.
+struct RedactedText: View {
+    @State private var isShowingHelp = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text("Android hid this notification's text")
+                .foregroundStyle(.secondary)
+            Button("Why?", systemImage: "info.circle") { isShowingHelp.toggle() }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+                .popover(isPresented: $isShowingHelp, arrowEdge: .bottom) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Hidden by Android")
+                            .font(.headline)
+                        Text("Android 15 hides notifications it thinks are sensitive, like sign-in codes, from apps such as KDE Connect. It can be allowed from a computer with adb:")
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("adb shell appops set org.kde.kdeconnect_tp RECEIVE_SENSITIVE_NOTIFICATIONS allow")
+                            .font(.system(.callout, design: .monospaced))
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(14)
+                    .frame(width: 320, alignment: .leading)
+                }
+        }
     }
 }
 

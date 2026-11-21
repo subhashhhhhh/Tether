@@ -11,6 +11,12 @@ public protocol TetherPlugin: AnyObject, Sendable {
     func onDisconnected(connection: DeviceConnection)
     func handlePacket(connection: DeviceConnection, packet: NetworkPacket)
 
+    /// The same verified device opened a new connection and the old one is
+    /// being closed, as when the phone rejoins Wi-Fi. The phone keeps its
+    /// own state across this, so a plugin should too, and only move to the
+    /// new connection. By default it's treated as a fresh connect.
+    func onConnectionReplaced(old: DeviceConnection, new: DeviceConnection)
+
     // The payload hooks must be requirements here, not only extension methods:
     // the service calls them through `any TetherPlugin`, and an extension-only
     // method is dispatched statically to the empty default, so a plugin's own
@@ -32,6 +38,10 @@ public protocol TetherPlugin: AnyObject, Sendable {
 }
 
 public extension TetherPlugin {
+    func onConnectionReplaced(old: DeviceConnection, new: DeviceConnection) {
+        onConnected(connection: new)
+        onDisconnected(connection: old)
+    }
     func handlePayload(connection: DeviceConnection, packet: NetworkPacket, fileURL: URL) {}
     func handlePayloadProgress(connection: DeviceConnection, packet: NetworkPacket, fraction: Double) {}
     func handlePayloadFailure(connection: DeviceConnection, packet: NetworkPacket, error: Error) {}

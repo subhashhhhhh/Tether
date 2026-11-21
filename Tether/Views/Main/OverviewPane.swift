@@ -37,8 +37,11 @@ struct OverviewPane: View {
 
                 let latest = Array(device.notifications.prefix(3))
                 ForEach(Array(latest.enumerated()), id: \.element.id) { index, item in
+                    // No insets: the inset list style keeps the row in from the
+                    // sides, so the row is exactly the card and a swipe
+                    // uncovers Dismiss right at the card's edge.
                     NotificationPreviewRow(item: item, device: device)
-                        .listRowInsets(EdgeInsets(top: 0, leading: Self.margin, bottom: 0, trailing: Self.margin))
+                        .listRowInsets(EdgeInsets())
                         .listRowSeparator(.hidden)
                         // Part of the row, not its background, so a swipe
                         // moves the whole card.
@@ -80,13 +83,12 @@ struct OverviewPane: View {
         }
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
-        // No toolbar band over the narrower list's top.
         .noTopScrollEdge()
     }
 
-    /// The page's side margin. The list fills the window, so it scrolls
-    /// anywhere in it and a swiped card slides to the edge.
-    fileprivate static let margin: CGFloat = 32
+    /// Rows' own side inset, on top of the list's. None, so every card on
+    /// the page has the same edges as the notification cards.
+    fileprivate static let margin: CGFloat = 0
 
     // MARK: Header and actions
 
@@ -157,6 +159,7 @@ private extension View {
     func overviewRow(top: CGFloat = 12, bottom: CGFloat = 12) -> some View {
         frame(maxWidth: .infinity, alignment: .leading)
             .listRowInsets(EdgeInsets(top: top, leading: OverviewPane.margin, bottom: bottom, trailing: OverviewPane.margin))
+
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
     }
@@ -329,10 +332,17 @@ private struct NotificationPreviewRow: View {
     let item: PhoneNotification
     let device: DeviceViewModel
 
+    static func oneLine(_ text: String) -> String {
+        text.split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(alignment: .center, spacing: 6) {
-                NotificationAppIcon(appName: item.appName, glyph: device.appGlyphs[item.appName], size: 18)
+                NotificationAppIcon(appName: item.appName, glyph: device.glyph(for: item), size: 18)
                 Text(item.appName)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
@@ -344,9 +354,16 @@ private struct NotificationPreviewRow: View {
             Text(item.title)
                 .fontWeight(.semibold)
                 .lineLimit(1)
-            if !item.text.isEmpty {
-                // The message is the content, so it's not greyed out.
-                Text(item.text)
+            if item.isRedacted {
+                RedactedText()
+            } else if !item.conversation.isEmpty {
+                ConversationText(notification: item)
+                    .lineLimit(2)
+            } else if !item.text.isEmpty {
+                // The message is the content, so it's not greyed out. Its line
+                // breaks are spaces here: a two-line preview of text that
+                // breaks early would stop halfway across the card.
+                Text(Self.oneLine(item.text))
                     .lineLimit(2)
             }
             NotificationQuickActions(notification: item, device: device)
