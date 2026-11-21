@@ -17,6 +17,8 @@ public struct MenuBarView: View {
     @Environment(\.openSettings) private var openSettings
     @Environment(\.dismiss) private var dismiss
     @State private var isDropTargeted = false
+    /// What Send Clipboard would send, read when the popover opens.
+    @State private var clipboardPreview: String?
 
     public init(appModel: TetherAppModel) {
         self.appModel = appModel
@@ -94,7 +96,10 @@ public struct MenuBarView: View {
             }
         }
         // Just the routine announcement: a thorough one makes a connected phone reconnect.
-        .onAppear { appModel.refreshDiscovery(thorough: false) }
+        .onAppear {
+            appModel.refreshDiscovery(thorough: false)
+            clipboardPreview = NSPasteboard.general.string(forType: .string).map(Self.preview)
+        }
     }
 
     // MARK: - Sections
@@ -172,13 +177,14 @@ public struct MenuBarView: View {
                 }
             }
 
-            if let received = device.receivedClipboard.first {
-                MenuRow(title: "Copy “\(Self.preview(of: received))”", systemImage: "doc.on.doc") {
-                    closePopover()
-                    device.copyReceivedClipboard(received)
-                }
-                .help("Put what \(device.name) last sent on this Mac's clipboard")
+            // Says what it will send, so there's no guessing which way it goes.
+            MenuRow(title: "Send Clipboard", systemImage: "doc.on.clipboard",
+                    subtitle: clipboardPreview.flatMap { $0.isEmpty ? nil : $0 } ?? "Nothing copied on this Mac") {
+                closePopover()
+                device.sendClipboard()
             }
+            .help("Send this Mac's clipboard to \(device.name)")
+            .disabled(clipboardPreview?.isEmpty ?? true)
 
             if let transfer = device.transfers.first(where: { $0.status == .transferring }) {
                 Button { open(.files, on: device) } label: {
@@ -220,11 +226,6 @@ public struct MenuBarView: View {
                     device.lockDevice()
                 }
             }
-            ActionTile(title: "Send Clipboard", systemImage: "doc.on.clipboard") {
-                closePopover()
-                device.sendClipboard()
-            }
-            .help("Send this Mac's clipboard to \(device.name)")
             ActionTile(title: "Send Files", systemImage: "arrow.up.doc") {
                 closePopover()
                 NSApp.activate()
@@ -235,10 +236,10 @@ public struct MenuBarView: View {
         .padding(.horizontal, 6)
     }
 
-    private static func preview(of text: String) -> String {
+    /// One line of the clipboard. The row truncates it to fit.
+    private static func preview(_ text: String) -> String {
         let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        return trimmed.count > 26 ? String(trimmed.prefix(26)) + "…" : trimmed
+        return String(line.trimmingCharacters(in: .whitespaces).prefix(120))
     }
 
     private func open(_ section: DeviceSection, on device: DeviceViewModel) {
@@ -500,6 +501,8 @@ private struct MenuRow: View {
     let systemImage: String
     /// A count or state shown at the trailing edge ("3", "2 unread").
     var detail: String?
+    /// A second line under the title, cut short if it's long.
+    var subtitle: String?
     /// The key pressed with Command, if the row has an equivalent.
     var shortcut: Character?
     let action: () -> Void
@@ -514,7 +517,15 @@ private struct MenuRow: View {
             HStack {
                 // One icon column, so titles line up whatever the symbol's width.
                 Label {
-                    Text(title)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(title)
+                        if let subtitle {
+                            Text(subtitle)
+                                .font(.caption)
+                                .foregroundStyle(isHovering ? AnyShapeStyle(.white.opacity(0.8)) : AnyShapeStyle(.secondary))
+                                .truncationMode(.tail)
+                        }
+                    }
                 } icon: {
                     Image(systemName: systemImage)
                         .frame(width: 20)

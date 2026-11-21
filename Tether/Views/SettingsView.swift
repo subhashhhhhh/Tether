@@ -15,7 +15,7 @@ public struct SettingsView: View {
 
     public var body: some View {
         TabView {
-            Tab("General", systemImage: "gearshape") {
+            Tab("General", systemImage: "gear") {
                 GeneralSettings(viewModel: viewModel)
             }
             Tab("Devices", systemImage: "iphone.gen3") {
@@ -32,7 +32,11 @@ public struct SettingsView: View {
             }
         }
         .frame(width: 560, height: 460)
-        .onAppear { viewModel.refresh() }
+        .onAppear {
+            viewModel.refresh()
+            DockPresence.windowOpened()
+        }
+        .onDisappear { DockPresence.windowClosed() }
     }
 }
 

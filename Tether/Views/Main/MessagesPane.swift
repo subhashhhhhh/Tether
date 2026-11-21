@@ -18,6 +18,9 @@ struct MessagesPane: View {
     private static let draftTag = Int64.min
     /// Who a new message went to, until its conversation shows up to select.
     @State private var pendingRecipient: String?
+    /// The list has focus when the page opens, so its selection is the
+    /// accent colour rather than the grey of a list you've left.
+    @FocusState private var isListFocused: Bool
 
     private var filteredThreads: [SMSConversation] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -66,6 +69,7 @@ struct MessagesPane: View {
             }
             .onAppear {
                 if selectedThreadId == nil { selectedThreadId = device.smsThreads.first?.id }
+                isListFocused = true
                 if startsComposing { startComposing() }
             }
             .onChange(of: selectedThreadId) {
@@ -133,6 +137,7 @@ struct MessagesPane: View {
             .listStyle(.inset)
             .scrollContentBackground(.hidden)
             .noTopScrollEdge()
+            .focused($isListFocused)
             // The search pill floats over the list, as in Messages: nothing
             // behind it, and rows pass under it as they scroll.
             // Overlaid, not inset: the system draws the toolbar's band and its

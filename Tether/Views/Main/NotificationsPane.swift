@@ -42,7 +42,7 @@ struct NotificationsPane: View {
             .toolbar {
                 if device.notifications.contains(where: \.isDismissable) {
                     ToolbarItem(placement: .primaryAction) {
-                        Button("Clear All", systemImage: "xmark.circle") {
+                        Button("Clear All") {
                             for notification in device.notifications where notification.isDismissable {
                                 device.dismiss(notification)
                             }

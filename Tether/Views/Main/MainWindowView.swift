@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import AppKit
 
 enum DeviceSection: String, CaseIterable, Identifiable {
     case overview, messages, notifications, files, commands
@@ -58,6 +59,31 @@ enum SidebarItem: Hashable {
     }
 }
 
+/// Tether lives in the menu bar, but a window with no Dock icon and no
+/// menu bar is hard to get back to, and leaves nowhere for Settings. While
+/// a window is open the app is a regular one; it goes back to the menu bar
+/// alone when the last one closes.
+@MainActor
+enum DockPresence {
+    /// Tests host their views in the app; they shouldn't take the Dock or focus.
+    private static let isTesting = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+
+    static func windowOpened() {
+        guard !isTesting else { return }
+        if NSApp.activationPolicy() != .regular { NSApp.setActivationPolicy(.regular) }
+        NSApp.activate()
+    }
+
+    static func windowClosed() {
+        guard !isTesting else { return }
+        // After the closing window has gone.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            let hasWindow = NSApp.windows.contains { $0.isVisible && $0.canBecomeMain && !($0 is NSPanel) }
+            if !hasWindow { NSApp.setActivationPolicy(.accessory) }
+        }
+    }
+}
+
 /// A request, from the menu bar popover, to show a device's section.
 struct SectionRequest: Equatable {
     let deviceId: String
@@ -97,15 +123,6 @@ public struct MainWindowView: View {
                                 .help("New Message")
                                 .keyboardShortcut("n", modifiers: .command)
                         }
-                        if #available(macOS 26.0, *) {
-                            ToolbarSpacer(.fixed, placement: .primaryAction)
-                        }
-                    }
-                    ToolbarItem(placement: .primaryAction) {
-                        SettingsLink {
-                            Label("Settings", systemImage: "gearshape")
-                        }
-                        .help("Settings")
                     }
                 }
         }
@@ -123,7 +140,9 @@ public struct MainWindowView: View {
         .onAppear {
             appModel.checkNotificationStatus()
             applySectionRequest()
+            DockPresence.windowOpened()
         }
+        .onDisappear { DockPresence.windowClosed() }
         .onChange(of: appModel.sectionRequest) { applySectionRequest() }
         .onChange(of: selection) {
             if let id = selection?.deviceId, id != appModel.selectedDeviceId {
