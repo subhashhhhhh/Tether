@@ -29,10 +29,13 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
 
     public init() {}
 
-    /// Nothing is asked for on connect: conversations are requested when
-    /// Messages opens, as KDE Connect desktop does. New messages the phone
-    /// sends as they arrive.
-    public func onConnected(connection: DeviceConnection) {}
+    /// Asks on every connect: the phone sends new messages as they arrive
+    /// only once it has been asked for messages since it connected, and the
+    /// answer fills the unread counts. A swapped connection keeps the phone's
+    /// side as it was, so that needs nothing (see onConnectionReplaced).
+    public func onConnected(connection: DeviceConnection) {
+        requestAllConversations(connection: connection)
+    }
 
     public func onDisconnected(connection: DeviceConnection) {}
 

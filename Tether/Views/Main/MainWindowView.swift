@@ -72,6 +72,9 @@ enum DockPresence {
         guard !isTesting else { return }
         if NSApp.activationPolicy() != .regular { NSApp.setActivationPolicy(.regular) }
         NSApp.activate()
+        // The Dock icon appears with the switch, without a badge; put it on
+        // once the icon is there.
+        DispatchQueue.main.async { applyBadge() }
     }
 
     static func windowClosed() {
@@ -84,10 +87,17 @@ enum DockPresence {
     }
 
     /// The count on the Dock icon, which is there while the window is open.
+    private static var badgeCount = 0
+
     static func setBadge(_ count: Int) {
         guard !isTesting else { return }
-        let label = count > 0 ? String(count) : nil
-        if NSApp.dockTile.badgeLabel != label { NSApp.dockTile.badgeLabel = label }
+        badgeCount = count
+        applyBadge()
+    }
+
+    private static func applyBadge() {
+        guard NSApp.activationPolicy() == .regular else { return }
+        NSApp.dockTile.badgeLabel = badgeCount > 0 ? String(badgeCount) : nil
     }
 }
 
