@@ -187,6 +187,21 @@ public struct NetworkPacket: Codable, Sendable {
         return defaultValue
     }
 
+    /// The port a payload is offered on, or nil when there's no usable one.
+    /// Sent as a number, but tolerated as a string.
+    public var payloadPort: UInt16? {
+        guard let raw = payloadTransferInfo?["port"]?.value else { return nil }
+        let port: UInt16?
+        switch raw {
+        case let int as Int: port = UInt16(exactly: int)
+        case let int64 as Int64: port = UInt16(exactly: int64)
+        case let number as NSNumber: port = UInt16(exactly: number.intValue)
+        case let string as String: port = UInt16(string)
+        default: port = nil
+        }
+        return port == 0 ? nil : port
+    }
+
     public func has(_ key: String) -> Bool {
         body[key] != nil
     }

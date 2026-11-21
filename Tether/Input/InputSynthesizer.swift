@@ -62,12 +62,6 @@ public final class InputSynthesizer: @unchecked Sendable {
         AXIsProcessTrusted()
     }
 
-    /// Prompts the user to grant accessibility permission in System Settings.
-    public func promptAccessibilityPermission() {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
-    }
-
     /// Opens System Settings -> Privacy & Security -> Accessibility
     public func openAccessibilitySettings() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {

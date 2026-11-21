@@ -92,9 +92,9 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
     @Published public private(set) var appGlyphs: [String: [String: Data]] = [:]
 
     public let supportedPacketTypes = [
-        "kdeconnect.notification",
-        "kdeconnect.notification.request",
-        "kdeconnect.notification.reply"
+        PacketType.notification,
+        PacketType.notificationRequest,
+        PacketType.notificationReply
     ]
 
     private let images = NotificationImages()
@@ -210,6 +210,12 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
             [category, replyCategory, codeCategory, codeReplyCategory, pairCategory, callCategory])
     }
 
+    /// How long after asking for the phone's notifications they're all in,
+    /// so banners for anything else can be cleared.
+    static let resyncSettleTime: TimeInterval = 6
+    /// How long a banner waits for its picture before showing without it.
+    static let imageWait: TimeInterval = 1
+
     static let plainCategory = "TETHER_NOTIFICATION_CATEGORY"
     static let replyCategory = "TETHER_REPLY_CATEGORY"
     static let codeCategory = "TETHER_CODE_CATEGORY"
@@ -250,13 +256,13 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
     private func startSync(deviceId: String, connection: DeviceConnection) {
         syncingDevices.insert(deviceId)
         connection.send(packet: NetworkPacket(
-            type: "kdeconnect.notification.request",
+            type: PacketType.notificationRequest,
             body: ["request": true]
         ))
         // The phone answers with everything it is showing. Once that's in,
         // a banner for anything else was dismissed while we were apart.
         let connectionId = ObjectIdentifier(connection)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.resyncSettleTime) { [weak self] in
             guard let self, self.activeConnections[deviceId].map(ObjectIdentifier.init) == connectionId,
                   self.syncingDevices.contains(deviceId) else { return }
             self.removeDeliveredBanners(deviceId: deviceId, keepingListed: true)
@@ -324,7 +330,7 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
         guard let replyId = notification.replyId,
               let connection = activeConnections[notification.deviceId] else { return }
         connection.send(packet: NetworkPacket(
-            type: "kdeconnect.notification.reply",
+            type: PacketType.notificationReply,
             body: ["requestReplyId": replyId, "message": text]
         ))
         TetherLog("[NotificationPlugin] Sent notification reply to \(notification.deviceId)")
@@ -373,7 +379,7 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
     public func perform(_ action: String, on notification: PhoneNotification) {
         guard let connection = activeConnections[notification.deviceId] else { return }
         connection.send(packet: NetworkPacket(
-            type: "kdeconnect.notification.action",
+            type: PacketType.notificationAction,
             body: ["key": notification.id, "action": action]
         ))
         TetherLog("[NotificationPlugin] Sent notification action to \(notification.deviceId)")
@@ -383,7 +389,7 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
     public func dismiss(_ notification: PhoneNotification) {
         if let connection = activeConnections[notification.deviceId] {
             connection.send(packet: NetworkPacket(
-                type: "kdeconnect.notification.request",
+                type: PacketType.notificationRequest,
                 body: ["cancel": notification.id]
             ))
         }
@@ -405,7 +411,7 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
     }
 
     public func handlePacket(connection: DeviceConnection, packet: NetworkPacket) {
-        guard packet.type == "kdeconnect.notification" else { return }
+        guard packet.type == PacketType.notification else { return }
 
         guard let deviceId = connection.peerDeviceInfo?.deviceId,
               let paired = TrustStore.shared.pairedDevice(for: deviceId),
@@ -492,7 +498,7 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
         if waitForImage {
             // Never hold up an alert for a slow/broken image transfer. A late
             // image enriches the in-app list without posting a second banner.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.imageWait) { [weak self] in
                 self?.finishWaiting(key, token: token)
             }
         } else {
@@ -501,21 +507,12 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
     }
 
     static func expectsImage(_ packet: NetworkPacket) -> Bool {
-        guard let size = packet.payloadSize, size > 0,
-              size <= NotificationImages.maximumPayloadSize,
-              let rawPort = packet.payloadTransferInfo?["port"]?.value else { return false }
-        let port: Int?
-        switch rawPort {
-        case let value as Int: port = value
-        case let value as Int64: port = Int(exactly: value)
-        case let value as String: port = Int(value)
-        default: port = nil
-        }
-        return port.map { (1...65535).contains($0) } ?? false
+        guard let size = packet.payloadSize, size > 0, size <= NotificationImages.maximumPayloadSize else { return false }
+        return packet.payloadPort != nil
     }
 
     public func handlePayload(connection: DeviceConnection, packet: NetworkPacket, fileURL: URL) {
-        guard packet.type == "kdeconnect.notification",
+        guard packet.type == PacketType.notification,
               let deviceId = connection.peerDeviceInfo?.deviceId,
               activeConnections[deviceId] === connection,
               TrustStore.shared.pairedDevice(for: deviceId)?.isNotificationSyncEnabled == true,
@@ -744,7 +741,7 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
            let replyId = userInfo["replyId"] as? String, !replyId.isEmpty {
             let replyText = textResponse.userText
             let replyPacket = NetworkPacket(
-                type: "kdeconnect.notification.reply",
+                type: PacketType.notificationReply,
                 body: [
                     "requestReplyId": replyId,
                     "message": replyText
@@ -755,7 +752,7 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
         } else if response.actionIdentifier == "TETHER_DISMISS_ACTION" {
             if let notifId = userInfo["notifId"] as? String {
                 let dismissPacket = NetworkPacket(
-                    type: "kdeconnect.notification.request",
+                    type: PacketType.notificationRequest,
                     body: ["cancel": notifId]
                 )
                 connection.send(packet: dismissPacket)

@@ -661,7 +661,7 @@ private nonisolated enum DER {
 
     private static func integer(_ magnitude: Data) -> Data {
         var bytes = Data(magnitude.drop { $0 == 0 })
-        if bytes.isEmpty || bytes.first! & 0x80 != 0 { bytes.insert(0, at: 0) }
+        if (bytes.first ?? 0x80) & 0x80 != 0 { bytes.insert(0, at: 0) }
         return Data([0x02]) + length(bytes.count) + bytes
     }
 

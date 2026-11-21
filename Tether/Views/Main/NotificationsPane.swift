@@ -285,7 +285,6 @@ struct RedactedText: View {
     }
 }
 
-/// Copies a verification code and says so for a moment.
 /// The app a notification came from: its status-bar glyph from the phone,
 /// drawn in the text colour as Android draws it, or its initial until the
 /// phone has sent one. The phone never sends an app's coloured icon.
@@ -344,6 +343,7 @@ struct NotificationQuickActions: View {
     }
 }
 
+/// Copies a verification code and says so for a moment.
 struct CopyCodeButton: View {
     let code: String
     /// Just the code, where there's no room for "Copy Code".

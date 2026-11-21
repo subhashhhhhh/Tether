@@ -12,7 +12,6 @@ import SwiftUI
 
 enum GlassMetrics {
     static let panelRadius: CGFloat = 20
-    static let cardRadius: CGFloat = 40
 }
 
 extension View {
@@ -32,15 +31,6 @@ extension View {
     /// navigation, so content gets a quiet fill instead, like a grouped form.
     func contentCard(radius: CGFloat = 16) -> some View {
         background(Color(nsColor: .quaternarySystemFill), in: .rect(cornerRadius: radius, style: .continuous))
-    }
-
-    /// Something that floats over the top of a scroll view, which scrolls
-    /// beneath it. An overlay with a matching content margin, not a safe
-    /// area inset: the system extends the toolbar's band and its line over
-    /// an inset, and what's wanted is nothing behind but the content.
-    func floatingHeader<Header: View>(height: CGFloat, @ViewBuilder content: () -> Header) -> some View {
-        contentMargins(.top, height, for: .scrollContent)
-            .overlay(alignment: .top) { content() }
     }
 
     /// Put on the scroll view itself: no edge effect at the top, for a list
@@ -87,15 +77,6 @@ extension View {
         }
     }
 
-    /// Glass over imagery (the phone card), where the material should stay clear.
-    @ViewBuilder
-    func clearGlass(in shape: some Shape) -> some View {
-        if #available(macOS 26.0, *) {
-            self.glassEffect(.clear, in: shape)
-        } else {
-            self.background(.ultraThinMaterial, in: shape)
-        }
-    }
 }
 
 /// A round glass button with a symbol, and optionally a caption under it.
@@ -332,11 +313,9 @@ extension View {
 
 private struct StaggeredEntrance: ViewModifier {
     let index: Int
-    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-    @AppStorage(MotionPreference.key) private var tetherReduceMotion = false
+    @Environment(\.reducesMotion) private var reduceMotion
     @State private var isShown = false
 
-    private var reduceMotion: Bool { systemReduceMotion || tetherReduceMotion }
 
     func body(content: Content) -> some View {
         content

@@ -62,19 +62,6 @@ public struct SMSMessage: Identifiable, Sendable, Equatable {
         [2, 4, 5, 6].contains(type)
     }
 
-    public var formattedTime: String {
-        let formatter = DateFormatter()
-        let calendar = Calendar.current
-        if calendar.isDateInToday(date) {
-            formatter.timeStyle = .short
-            formatter.dateStyle = .none
-        } else {
-            formatter.timeStyle = .short
-            formatter.dateStyle = .short
-        }
-        return formatter.string(from: date)
-    }
-
     public init(
         id: UUID = UUID(),
         event: Int = 1,

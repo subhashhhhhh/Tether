@@ -465,17 +465,16 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, MDNSDi
         guard let size = packet.payloadSize, size > 0 || size == -1 || (size == 0 && packet.type == SharePlugin.shareRequestType) else { return }
         // Notification artwork is small. Reject oversized announcements before
         // opening a payload socket or consuming disk space; text still arrives.
-        if packet.type == "kdeconnect.notification",
+        if packet.type == PacketType.notification,
            size <= 0 || size > NotificationImages.maximumPayloadSize { return }
-        guard let rawPort = packet.payloadTransferInfo?["port"]?.value,
-              let port = Self.payloadPort(from: rawPort) else {
+        guard let port = packet.payloadPort else {
             TetherLog("[TetherService] \(packet.type) announced \(size) bytes but no usable payload port: \(String(describing: packet.payloadTransferInfo))")
             return
         }
         // The phone sends a notification's picture again with each new
         // notification. One already stored is used as it is, as the desktop
         // app does; the phone gives up on the transfer after 10 s.
-        if packet.type == "kdeconnect.notification",
+        if packet.type == PacketType.notification,
            let hash = packet.string(for: "payloadHash"), !hash.isEmpty,
            let deviceId = connection.peerDeviceInfo?.deviceId {
             Task { @MainActor in
@@ -526,17 +525,6 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, MDNSDi
         // Kept so a received file can be cancelled from the Files list.
         if packet.type == SharePlugin.shareRequestType {
             sharePlugin.track(handle, forPacket: packet.id)
-        }
-    }
-
-    /// Payload ports are integers on the wire, but tolerate a stringified value.
-    nonisolated private static func payloadPort(from value: Any) -> UInt16? {
-        switch value {
-        case let int as Int: return UInt16(exactly: int)
-        case let int64 as Int64: return UInt16(exactly: int64)
-        case let number as NSNumber: return UInt16(exactly: number.intValue)
-        case let string as String: return UInt16(string)
-        default: return nil
         }
     }
 
@@ -677,13 +665,6 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, MDNSDi
                     ?? remoteVolumePlugin.sinks[deviceId]?.first {
             remoteVolumePlugin.setVolume(sinkName: sink.name, volume: volume, connection: conn)
         }
-    }
-
-    /// Re-reads media and volume state, e.g. when the popover opens.
-    public func refreshRemoteState(deviceId: String) {
-        guard let conn = connectedDevices[deviceId] else { return }
-        mediaControlPlugin.requestState(connection: conn)
-        remoteVolumePlugin.requestSinks(connection: conn)
     }
 
     /// `thorough` announces to every candidate, connected phones included, and

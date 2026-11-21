@@ -15,11 +15,11 @@ import Foundation
 import Combine
 
 public final class ContactsPlugin: ObservableObject, TetherPlugin, @unchecked Sendable {
-    static let requestAllType = "kdeconnect.contacts.request_all_uids_timestamps"
+    static let requestAllType = PacketType.contactsRequestAllUidsTimestamps
     // Singular "uid", unlike the other three: that is the name on both sides.
-    static let requestVCardsType = "kdeconnect.contacts.request_vcards_by_uid"
-    static let responseUIDsType = "kdeconnect.contacts.response_uids_timestamps"
-    static let responseVCardsType = "kdeconnect.contacts.response_vcards"
+    static let requestVCardsType = PacketType.contactsRequestVcardsByUid
+    static let responseUIDsType = PacketType.contactsResponseUidsTimestamps
+    static let responseVCardsType = PacketType.contactsResponseVcards
 
     public let supportedPacketTypes = [responseUIDsType, responseVCardsType]
 

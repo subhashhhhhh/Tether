@@ -8,9 +8,9 @@
 import Foundation
 
 public final class MousepadPlugin: TetherPlugin, @unchecked Sendable {
-    public static let requestType = "kdeconnect.mousepad.request"
-    public static let keyboardStateType = "kdeconnect.mousepad.keyboardstate"
-    public static let echoType = "kdeconnect.mousepad.echo"
+    public static let requestType = PacketType.mousepadRequest
+    public static let keyboardStateType = PacketType.mousepadKeyboardstate
+    public static let echoType = PacketType.mousepadEcho
 
     public var supportedPacketTypes: [String] {
         [Self.requestType]

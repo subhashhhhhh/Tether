@@ -111,7 +111,7 @@ public struct MenuBarView: View {
     }
 
     private func readClipboard() {
-        let preview = NSPasteboard.general.string(forType: .string).map(Self.preview)
+        let preview = NSPasteboard.general.string(forType: .string).map { $0.firstLine(limit: 120) }
         if preview != clipboardPreview { clipboardPreview = preview }
     }
 
@@ -248,10 +248,6 @@ public struct MenuBarView: View {
     }
 
     /// One line of the clipboard. The row truncates it to fit.
-    private static func preview(_ text: String) -> String {
-        let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
-        return String(line.trimmingCharacters(in: .whitespaces).prefix(120))
-    }
 
     private func open(_ section: DeviceSection, on device: DeviceViewModel) {
         appModel.sectionRequest = SectionRequest(deviceId: device.id, section: section)

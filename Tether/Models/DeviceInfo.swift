@@ -71,88 +71,88 @@ public struct DeviceInfo: Codable, Sendable, Identifiable {
 
     /// Packet types we accept. A peer only sends a type that appears here.
     public static let defaultIncomingCapabilities: Set<String> = [
-        "kdeconnect.ping",
-        "kdeconnect.notification",
-        "kdeconnect.notification.request",
-        "kdeconnect.notification.reply",
-        "kdeconnect.clipboard",
-        "kdeconnect.clipboard.connect",
-        "kdeconnect.battery",
+        PacketType.ping,
+        PacketType.notification,
+        PacketType.notificationRequest,
+        PacketType.notificationReply,
+        PacketType.clipboard,
+        PacketType.clipboardConnect,
+        PacketType.battery,
         // Media control: state reports from the peer's player.
-        "kdeconnect.mpris",
+        PacketType.mpris,
         // The phone's Multimedia control driving this Mac
-        "kdeconnect.mpris.request",
+        PacketType.mprisRequest,
         // Peer volume reporting.
-        "kdeconnect.systemvolume",
+        PacketType.systemvolume,
         // The phone's volume panel controlling this Mac
-        "kdeconnect.systemvolume.request",
+        PacketType.systemvolumeRequest,
         // Lock state reports.
-        "kdeconnect.lock",
+        PacketType.lock,
         // Cellular signal reports.
-        "kdeconnect.connectivity_report",
+        PacketType.connectivityReport,
         // Call and message events.
-        "kdeconnect.telephony",
+        PacketType.telephony,
         // File, text, and URL sharing
-        "kdeconnect.share.request",
-        "kdeconnect.share.request.update",
+        PacketType.shareRequest,
+        PacketType.shareRequestUpdate,
         // Remote input and presenter
-        "kdeconnect.mousepad.request",
-        "kdeconnect.presenter",
+        PacketType.mousepadRequest,
+        PacketType.presenter,
         // SMS messages and attachments
-        "kdeconnect.sms.messages",
-        "kdeconnect.sms.attachment_file",
+        PacketType.smsMessages,
+        PacketType.smsAttachmentFile,
         // Contacts, as vCards
-        "kdeconnect.contacts.response_uids_timestamps",
-        "kdeconnect.contacts.response_vcards",
+        PacketType.contactsResponseUidsTimestamps,
+        PacketType.contactsResponseVcards,
         // Phone storage, for Finder
-        "kdeconnect.sftp",
+        PacketType.sftp,
         // Remote commands
-        "kdeconnect.runcommand.request",
+        PacketType.runcommandRequest,
         // The phone ringing this Mac
-        "kdeconnect.findmyphone.request",
+        PacketType.findmyphoneRequest,
     ]
 
     /// Packet types we emit. A peer only accepts a type that appears here.
     public static let defaultOutgoingCapabilities: Set<String> = [
-        "kdeconnect.ping",
-        "kdeconnect.notification",
-        "kdeconnect.notification.request",
-        "kdeconnect.notification.reply",
-        "kdeconnect.notification.action",
-        "kdeconnect.clipboard",
-        "kdeconnect.clipboard.connect",
-        "kdeconnect.battery",
+        PacketType.ping,
+        PacketType.notification,
+        PacketType.notificationRequest,
+        PacketType.notificationReply,
+        PacketType.notificationAction,
+        PacketType.clipboard,
+        PacketType.clipboardConnect,
+        PacketType.battery,
         // Media transport and state queries.
-        "kdeconnect.mpris.request",
+        PacketType.mprisRequest,
         // This Mac as a player in the phone's Multimedia control
-        "kdeconnect.mpris",
+        PacketType.mpris,
         // Ring request.
-        "kdeconnect.findmyphone.request",
+        PacketType.findmyphoneRequest,
         // Peer volume queries and changes.
-        "kdeconnect.systemvolume.request",
+        PacketType.systemvolumeRequest,
         // This Mac's volume, for the phone's volume panel
-        "kdeconnect.systemvolume",
+        PacketType.systemvolume,
         // Lock and lock-state requests.
-        "kdeconnect.lock.request",
+        PacketType.lockRequest,
         // File, text, and URL sharing
-        "kdeconnect.share.request",
+        PacketType.shareRequest,
         // Remote input keyboard state and echo
-        "kdeconnect.mousepad.keyboardstate",
-        "kdeconnect.mousepad.echo",
+        PacketType.mousepadKeyboardstate,
+        PacketType.mousepadEcho,
         // SMS requests
-        "kdeconnect.sms.request",
-        "kdeconnect.sftp.request",
-        "kdeconnect.sms.request_conversations",
-        "kdeconnect.sms.request_conversation",
-        "kdeconnect.sms.request_attachment",
+        PacketType.smsRequest,
+        PacketType.sftpRequest,
+        PacketType.smsRequestConversations,
+        PacketType.smsRequestConversation,
+        PacketType.smsRequestAttachment,
         // Contacts
-        "kdeconnect.contacts.request_all_uids_timestamps",
-        "kdeconnect.contacts.request_vcards_by_uid",
+        PacketType.contactsRequestAllUidsTimestamps,
+        PacketType.contactsRequestVcardsByUid,
         // Silencing the ringer from an incoming-call notification
-        "kdeconnect.telephony.request_mute",
+        PacketType.telephonyRequestMute,
         // Remote commands
-        "kdeconnect.runcommand",
-        "kdeconnect.runcommand.output"
+        PacketType.runcommand,
+        PacketType.runcommandOutput
     ]
 
     // Create UDP discovery packet
@@ -166,7 +166,7 @@ public struct DeviceInfo: Codable, Sendable, Identifiable {
         if let port = tcpPort {
             body["tcpPort"] = port
         }
-        return NetworkPacket(type: "kdeconnect.identity", body: body)
+        return NetworkPacket(type: PacketType.identity, body: body)
     }
 
     // Create TCP initial connection packet
@@ -179,7 +179,7 @@ public struct DeviceInfo: Codable, Sendable, Identifiable {
             "targetDeviceId": targetDeviceId,
             "targetProtocolVersion": targetProtocolVersion
         ]
-        return NetworkPacket(type: "kdeconnect.identity", body: body)
+        return NetworkPacket(type: PacketType.identity, body: body)
     }
 
     // Create full encrypted identity packet
@@ -192,7 +192,7 @@ public struct DeviceInfo: Codable, Sendable, Identifiable {
             "incomingCapabilities": Array(incomingCapabilities),
             "outgoingCapabilities": Array(outgoingCapabilities)
         ]
-        return NetworkPacket(type: "kdeconnect.identity", body: body)
+        return NetworkPacket(type: PacketType.identity, body: body)
     }
 
     static let validTCPPorts = 1...Int(UInt16.max)
@@ -215,7 +215,7 @@ public struct DeviceInfo: Codable, Sendable, Identifiable {
 
     // Parse from packet
     public static func from(packet: NetworkPacket) -> DeviceInfo? {
-        guard packet.type == "kdeconnect.identity",
+        guard packet.type == PacketType.identity,
               let deviceId = packet.string(for: "deviceId"),
               isValidDeviceId(deviceId) else {
             return nil

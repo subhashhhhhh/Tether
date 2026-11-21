@@ -51,7 +51,7 @@ public final class DeviceIdentity: @unchecked Sendable {
 
     private init() {
         let fm = FileManager.default
-        let appSupportRoot = fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let appSupportRoot = URL.applicationSupportDirectory
         let paths = Paths(directory: appSupportRoot.appendingPathComponent("Tether", isDirectory: true))
 
         try? fm.createDirectory(at: paths.directory, withIntermediateDirectories: true)
@@ -261,10 +261,6 @@ public final class DeviceIdentity: @unchecked Sendable {
             let aside = url.deletingLastPathComponent().appendingPathComponent("\(url.lastPathComponent).broken-\(stamp)")
             try? FileManager.default.moveItem(at: url, to: aside)
         }
-    }
-
-    public func createSecIdentityProtocol() -> sec_identity_t? {
-        sec_identity_create(secIdentity)
     }
 
     public func toDeviceInfo(tcpPort: Int? = nil) -> DeviceInfo {

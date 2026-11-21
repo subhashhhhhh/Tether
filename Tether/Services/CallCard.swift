@@ -248,6 +248,8 @@ struct CallCardView: View {
         }
         // The card never takes focus, and its buttons shouldn't look disabled for it.
         .environment(\.appearsActive, true)
+        // Its own window, so it sets the motion preference itself.
+        .tetherMotionPreference()
     }
 
     private func ringing(silenced: Bool) -> some View {
@@ -325,15 +327,14 @@ private struct CallerAvatar: View {
     let size: CGFloat
     let pulses: Bool
     @State private var isPulsing = false
-    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-    @AppStorage(MotionPreference.key) private var tetherReduceMotion = false
+    @Environment(\.reducesMotion) private var reduceMotion
 
     var body: some View {
         face
             .frame(width: size, height: size)
             .clipShape(.circle)
             .background {
-                if pulses && !systemReduceMotion && !tetherReduceMotion {
+                if pulses && !reduceMotion {
                     Circle()
                         .stroke(.green.opacity(0.5), lineWidth: 2)
                         .scaleEffect(isPulsing ? 1.35 : 1)

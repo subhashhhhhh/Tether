@@ -8,7 +8,6 @@
 
 import SwiftUI
 import AppKit
-import UserNotifications
 
 enum DeviceSection: String, CaseIterable, Identifiable {
     case overview, messages, notifications, files, commands
@@ -118,10 +117,7 @@ enum DockPresence {
         if redraw { NSApp.dockTile.badgeLabel = nil }
         NSApp.dockTile.badgeLabel = badgeCount > 0 ? String(badgeCount) : nil
         NSApp.dockTile.display()
-        let label = NSApp.dockTile.badgeLabel ?? "nil"
-        UNUserNotificationCenter.current().getNotificationSettings { settings in
-            TetherLog("[Dock] Badge \(badgeCount); tile label \(label); badges allowed: \(settings.badgeSetting.rawValue) (2 = on); authorization \(settings.authorizationStatus.rawValue); bundle \(Bundle.main.bundlePath)")
-        }
+        TetherLog("[Dock] Badge \(badgeCount)")
     }
 }
 
@@ -311,15 +307,7 @@ struct DeviceSidebar: View {
             // device, so the selected row is never hidden.
             if case .section(let id, _) = selection, isFolded(id) { setFolded(false, id) }
         }
-        .confirmationDialog(
-            "Unpair \(deviceToUnpair?.name ?? "device")?",
-            isPresented: Binding(get: { deviceToUnpair != nil }, set: { if !$0 { deviceToUnpair = nil } }),
-            presenting: deviceToUnpair
-        ) { device in
-            Button("Unpair", role: .destructive) { device.unpair() }
-        } message: { device in
-            Text("You'll need to pair again from \(device.name) to reconnect.")
-        }
+        .unpairConfirmation(for: $deviceToUnpair, name: \.name) { $0.unpair() }
     }
 
     // MARK: Folding

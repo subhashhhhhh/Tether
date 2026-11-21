@@ -11,7 +11,4 @@ public enum PairState: String, Codable, Sendable {
     case requestedByPeer
     case paired
 
-    public var isPaired: Bool {
-        self == .paired
-    }
 }

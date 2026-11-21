@@ -200,11 +200,6 @@ private struct ClipboardMenu: View {
         .help("What \(device.name) sent to this Mac's clipboard")
     }
 
-    static func preview(of text: String) -> String {
-        let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
-        let trimmed = line.trimmingCharacters(in: .whitespaces)
-        return trimmed.count > 48 ? String(trimmed.prefix(48)) + "…" : trimmed
-    }
 }
 
 /// What the device last put on this Mac's clipboard; a click copies one again.
@@ -227,7 +222,7 @@ private struct ReceivedClipboardList: View {
                         device.copyReceivedClipboard(text)
                         close()
                     } label: {
-                        Label(ClipboardMenu.preview(of: text), systemImage: "doc.on.doc")
+                        Label(text.firstLine(limit: 48), systemImage: "doc.on.doc")
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .help("Copy to this Mac's clipboard")
@@ -347,12 +342,6 @@ private struct NotificationPreviewRow: View {
     let item: PhoneNotification
     let device: DeviceViewModel
 
-    static func oneLine(_ text: String) -> String {
-        text.split(whereSeparator: \.isNewline)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-            .joined(separator: " ")
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -380,7 +369,7 @@ private struct NotificationPreviewRow: View {
                 // The message is the content, so it's not greyed out. Its line
                 // breaks are spaces here: a two-line preview of text that
                 // breaks early would stop halfway across the card.
-                Text(Self.oneLine(item.text))
+                Text(item.text.joinedLines)
                     .lineLimit(2)
             }
             NotificationQuickActions(notification: item, device: device)

@@ -27,14 +27,6 @@ public struct NowPlaying: Sendable, Equatable {
     public var canGoPrevious: Bool = false
     public var canSeek: Bool = false
 
-    public var hasTrack: Bool { !title.isEmpty }
-
-    /// Elapsed time as mm:ss, empty when the length is unknown.
-    public var elapsedLabel: String {
-        guard length > 0 else { return "" }
-        let seconds = max(0, position / 1000)
-        return String(format: "%d:%02d", seconds / 60, seconds % 60)
-    }
 }
 
 /// Controls the phone's media player (upstream's `mprisremote`).
@@ -44,7 +36,7 @@ public struct NowPlaying: Sendable, Equatable {
 /// flagged by `transferringAlbumArt`.
 public final class MediaControlPlugin: ObservableObject, TetherPlugin, @unchecked Sendable {
 
-    public let supportedPacketTypes = ["kdeconnect.mpris"]
+    public let supportedPacketTypes = [PacketType.mpris]
 
     /// The shown player's track, per device id.
     @Published public private(set) var nowPlaying: [String: NowPlaying] = [:]
@@ -87,7 +79,7 @@ public final class MediaControlPlugin: ObservableObject, TetherPlugin, @unchecke
     }
 
     public func handlePacket(connection: DeviceConnection, packet: NetworkPacket) {
-        guard packet.type == "kdeconnect.mpris",
+        guard packet.type == PacketType.mpris,
               let deviceId = connection.peerDeviceInfo?.deviceId else { return }
 
         if packet.body["playerList"] != nil {
@@ -99,7 +91,7 @@ public final class MediaControlPlugin: ObservableObject, TetherPlugin, @unchecke
             // Each player answers for itself, so a new one is asked directly.
             for player in playerList where !known.contains(player) {
                 connection.send(packet: NetworkPacket(
-                    type: "kdeconnect.mpris.request",
+                    type: PacketType.mprisRequest,
                     body: ["player": player, "requestNowPlaying": true, "requestVolume": true]
                 ))
             }
@@ -162,7 +154,7 @@ public final class MediaControlPlugin: ObservableObject, TetherPlugin, @unchecke
                 albumArt.removeValue(forKey: deviceId)
             } else {
                 connection.send(packet: NetworkPacket(
-                    type: "kdeconnect.mpris.request",
+                    type: PacketType.mprisRequest,
                     body: ["player": name, "albumArtUrl": url]
                 ))
             }
@@ -177,14 +169,14 @@ public final class MediaControlPlugin: ObservableObject, TetherPlugin, @unchecke
         showCurrentPlayer(deviceId: deviceId, connection: connection)
         if let player {
             connection.send(packet: NetworkPacket(
-                type: "kdeconnect.mpris.request",
+                type: PacketType.mprisRequest,
                 body: ["player": player, "requestNowPlaying": true, "requestVolume": true]
             ))
         }
     }
 
     public func handlePayload(connection: DeviceConnection, packet: NetworkPacket, fileURL: URL) {
-        guard packet.type == "kdeconnect.mpris",
+        guard packet.type == PacketType.mpris,
               let deviceId = connection.peerDeviceInfo?.deviceId,
               packet.bool(for: "transferringAlbumArt"),
               // Art for a track that's already been replaced is stale.
@@ -198,7 +190,7 @@ public final class MediaControlPlugin: ObservableObject, TetherPlugin, @unchecke
 
     public func requestState(connection: DeviceConnection) {
         let packet = NetworkPacket(
-            type: "kdeconnect.mpris.request",
+            type: PacketType.mprisRequest,
             body: [
                 "requestPlayerList": true,
                 "requestNowPlaying": true,
@@ -214,7 +206,7 @@ public final class MediaControlPlugin: ObservableObject, TetherPlugin, @unchecke
         if let player = currentPlayer(connection: connection) {
             body["player"] = player
         }
-        connection.send(packet: NetworkPacket(type: "kdeconnect.mpris.request", body: body))
+        connection.send(packet: NetworkPacket(type: PacketType.mprisRequest, body: body))
     }
 
     public func setVolume(_ volume: Int, connection: DeviceConnection) {
@@ -222,7 +214,7 @@ public final class MediaControlPlugin: ObservableObject, TetherPlugin, @unchecke
         if let player = currentPlayer(connection: connection) {
             body["player"] = player
         }
-        connection.send(packet: NetworkPacket(type: "kdeconnect.mpris.request", body: body))
+        connection.send(packet: NetworkPacket(type: PacketType.mprisRequest, body: body))
     }
 
     /// Moves to a position in the track, in milliseconds. The phone takes
@@ -232,7 +224,7 @@ public final class MediaControlPlugin: ObservableObject, TetherPlugin, @unchecke
         if let player = currentPlayer(connection: connection) {
             body["player"] = player
         }
-        connection.send(packet: NetworkPacket(type: "kdeconnect.mpris.request", body: body))
+        connection.send(packet: NetworkPacket(type: PacketType.mprisRequest, body: body))
     }
 
     private func currentPlayer(connection: DeviceConnection) -> String? {

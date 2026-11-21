@@ -175,7 +175,7 @@ struct OfflineDeviceView: View {
     let appModel: TetherAppModel
     let onConnectByIP: () -> Void
 
-    @State private var isConfirmingUnpair = false
+    @State private var deviceToUnpair: DeviceViewModel?
 
     var body: some View {
         VStack(spacing: 18) {
@@ -199,18 +199,14 @@ struct OfflineDeviceView: View {
             }
             .controlSize(.large)
 
-            Button("Unpair…", role: .destructive) { isConfirmingUnpair = true }
+            Button("Unpair…", role: .destructive) { deviceToUnpair = device }
                 .buttonStyle(.link)
                 .foregroundStyle(.red)
                 .padding(.top, 8)
         }
         .frame(maxWidth: 380)
         .padding(32)
-        .confirmationDialog("Unpair \(device.name)?", isPresented: $isConfirmingUnpair) {
-            Button("Unpair", role: .destructive) { device.unpair() }
-        } message: {
-            Text("You'll need to pair again from \(device.name) to reconnect.")
-        }
+        .unpairConfirmation(for: $deviceToUnpair, name: \.name) { $0.unpair() }
     }
 }
 

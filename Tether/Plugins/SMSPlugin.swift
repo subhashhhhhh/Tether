@@ -10,12 +10,12 @@ import Foundation
 import Combine
 
 public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendable {
-    public static let messagesType = "kdeconnect.sms.messages"
-    public static let attachmentFileType = "kdeconnect.sms.attachment_file"
-    public static let requestType = "kdeconnect.sms.request"
-    public static let requestConversationsType = "kdeconnect.sms.request_conversations"
-    public static let requestConversationType = "kdeconnect.sms.request_conversation"
-    public static let requestAttachmentType = "kdeconnect.sms.request_attachment"
+    public static let messagesType = PacketType.smsMessages
+    public static let attachmentFileType = PacketType.smsAttachmentFile
+    public static let requestType = PacketType.smsRequest
+    public static let requestConversationsType = PacketType.smsRequestConversations
+    public static let requestConversationType = PacketType.smsRequestConversation
+    public static let requestAttachmentType = PacketType.smsRequestAttachment
 
     public var supportedPacketTypes: [String] {
         [Self.messagesType, Self.attachmentFileType]
@@ -29,9 +29,6 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
     /// Changes whenever conversations do, so a reader can skip re-sorting
     /// when nothing changed.
     public private(set) var revision = 0
-    @Published public private(set) var activeThreadId: Int64?
-
-    private let lock = NSLock()
 
     public init() {}
 
@@ -56,7 +53,7 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
 
     /// Where attachments are kept once fetched, so each is fetched once.
     nonisolated static let attachmentDirectory: URL = {
-        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let caches = URL.cachesDirectory
         return caches.appendingPathComponent("TetherAttachments", isDirectory: true)
     }()
 
@@ -222,12 +219,6 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
                     self.conversations[deviceId, default: [:]][targetThreadId] = conv
                 }
             }
-        }
-    }
-
-    public func setActiveThread(_ threadId: Int64?) {
-        DispatchQueue.main.async {
-            self.activeThreadId = threadId
         }
     }
 

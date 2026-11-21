@@ -20,7 +20,7 @@ public struct DeviceBatteryInfo: Sendable, Equatable {
 
 /// The phone's battery for the Mac, and this Mac's battery for the phone.
 public final class BatteryPlugin: ObservableObject, TetherPlugin, @unchecked Sendable {
-    public let supportedPacketTypes = ["kdeconnect.battery"]
+    public let supportedPacketTypes = [PacketType.battery]
 
     @Published public private(set) var deviceBatteries: [String: DeviceBatteryInfo] = [:]
 
@@ -69,7 +69,7 @@ public final class BatteryPlugin: ObservableObject, TetherPlugin, @unchecked Sen
     }
 
     public func handlePacket(connection: DeviceConnection, packet: NetworkPacket) {
-        guard packet.type == "kdeconnect.battery",
+        guard packet.type == PacketType.battery,
               let deviceId = connection.peerDeviceInfo?.deviceId else {
             return
         }
@@ -110,7 +110,7 @@ public final class BatteryPlugin: ObservableObject, TetherPlugin, @unchecked Sen
     /// Nothing on a Mac without a battery, as desktop KDE Connect does.
     private static func packet(_ status: MacBatteryStatus?) -> NetworkPacket? {
         guard let status else { return nil }
-        return NetworkPacket(type: "kdeconnect.battery", body: [
+        return NetworkPacket(type: PacketType.battery, body: [
             "currentCharge": status.charge,
             "isCharging": status.isCharging,
             "batteryQuantity": status.batteryCount,

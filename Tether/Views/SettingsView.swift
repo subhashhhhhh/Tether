@@ -381,15 +381,7 @@ private struct DevicesSettings: View {
             }
         }
         .formStyle(.grouped)
-        .confirmationDialog(
-            "Unpair \(deviceToUnpair?.deviceName ?? "device")?",
-            isPresented: Binding(get: { deviceToUnpair != nil }, set: { if !$0 { deviceToUnpair = nil } }),
-            presenting: deviceToUnpair
-        ) { device in
-            Button("Unpair", role: .destructive) { viewModel.unpair(deviceId: device.deviceId) }
-        } message: { device in
-            Text("You'll need to pair again from \(device.deviceName) to reconnect.")
-        }
+        .unpairConfirmation(for: $deviceToUnpair, name: \.deviceName) { viewModel.unpair(deviceId: $0.deviceId) }
     }
 }
 

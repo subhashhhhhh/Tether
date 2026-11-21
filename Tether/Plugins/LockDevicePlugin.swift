@@ -13,7 +13,7 @@ import Combine
 /// `kdeconnect.lock` carrying `isLocked` and, for a state query, `lockResult`.
 public final class LockDevicePlugin: ObservableObject, TetherPlugin, @unchecked Sendable {
 
-    public let supportedPacketTypes = ["kdeconnect.lock"]
+    public let supportedPacketTypes = [PacketType.lock]
 
     /// Last reported lock state per device id.
     @Published public private(set) var isLocked: [String: Bool] = [:]
@@ -31,7 +31,7 @@ public final class LockDevicePlugin: ObservableObject, TetherPlugin, @unchecked 
     }
 
     public func handlePacket(connection: DeviceConnection, packet: NetworkPacket) {
-        guard packet.type == "kdeconnect.lock",
+        guard packet.type == PacketType.lock,
               let deviceId = connection.peerDeviceInfo?.deviceId else { return }
 
         isLocked[deviceId] = packet.bool(for: "isLocked", default: false)
@@ -39,14 +39,14 @@ public final class LockDevicePlugin: ObservableObject, TetherPlugin, @unchecked 
 
     /// Asks the peer to lock itself.
     public func lock(connection: DeviceConnection) {
-        let packet = NetworkPacket(type: "kdeconnect.lock.request", body: ["setLocked": true])
+        let packet = NetworkPacket(type: PacketType.lockRequest, body: ["setLocked": true])
         connection.send(packet: packet)
         TetherLog("[LockDevicePlugin] Sent lock request")
     }
 
     /// Asks the peer to report its current lock state.
     public func requestState(connection: DeviceConnection) {
-        let packet = NetworkPacket(type: "kdeconnect.lock.request", body: ["requestLocked": true])
+        let packet = NetworkPacket(type: PacketType.lockRequest, body: ["requestLocked": true])
         connection.send(packet: packet)
     }
 }

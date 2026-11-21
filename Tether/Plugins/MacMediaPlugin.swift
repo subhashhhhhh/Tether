@@ -18,8 +18,8 @@
 import Foundation
 
 public final class MacMediaPlugin: TetherPlugin, @unchecked Sendable {
-    static let requestType = "kdeconnect.mpris.request"
-    static let reportType = "kdeconnect.mpris"
+    static let requestType = PacketType.mprisRequest
+    static let reportType = PacketType.mpris
     static let playerName = "This Mac"
 
     public let supportedPacketTypes = [requestType]

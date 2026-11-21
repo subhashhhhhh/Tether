@@ -60,12 +60,4 @@ public struct TransferItem: Identifiable, Equatable, Sendable {
         self.localURL = localURL
     }
 
-    public var formattedSize: String {
-        ByteCountFormatter.string(fromByteCount: totalBytes, countStyle: .file)
-    }
-
-    public var formattedProgress: String {
-        let percent = Int(progress * 100)
-        return "\(percent)%"
-    }
 }

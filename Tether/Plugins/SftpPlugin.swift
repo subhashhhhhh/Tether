@@ -12,7 +12,7 @@
 import Foundation
 
 nonisolated public final class SftpPlugin: TetherPlugin, @unchecked Sendable {
-    public let supportedPacketTypes = ["kdeconnect.sftp"]
+    public let supportedPacketTypes = [PacketType.sftp]
 
     public struct Credentials: Sendable {
         public let address: String
@@ -59,7 +59,7 @@ nonisolated public final class SftpPlugin: TetherPlugin, @unchecked Sendable {
     }
 
     public func handlePacket(connection: DeviceConnection, packet: NetworkPacket) {
-        guard packet.type == "kdeconnect.sftp", let id = connection.peerDeviceInfo?.deviceId else { return }
+        guard packet.type == PacketType.sftp, let id = connection.peerDeviceInfo?.deviceId else { return }
 
         let result: Result<Credentials, Error>
         if let message = packet.string(for: "errorMessage") {
@@ -94,7 +94,7 @@ nonisolated public final class SftpPlugin: TetherPlugin, @unchecked Sendable {
                 return waiters[deviceId]?.isEmpty ?? true
             }
             if first {
-                connection.send(packet: NetworkPacket(type: "kdeconnect.sftp.request", body: ["startBrowsing": true]))
+                connection.send(packet: NetworkPacket(type: PacketType.sftpRequest, body: ["startBrowsing": true]))
             }
             DispatchQueue.global().asyncAfter(deadline: .now() + 15) { [weak self] in
                 guard let self else { return }

@@ -17,8 +17,8 @@ public final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked S
     private static let receivedKey = "tether_received_clipboard"
 
     public let supportedPacketTypes = [
-        "kdeconnect.clipboard",
-        "kdeconnect.clipboard.connect"
+        PacketType.clipboard,
+        PacketType.clipboardConnect
     ]
 
     private var lastChangeCount: Int = 0
@@ -113,7 +113,7 @@ public final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked S
     }
 
     public func handlePacket(connection: DeviceConnection, packet: NetworkPacket) {
-        guard packet.type == "kdeconnect.clipboard" || packet.type == "kdeconnect.clipboard.connect" else { return }
+        guard packet.type == PacketType.clipboard || packet.type == PacketType.clipboardConnect else { return }
 
         guard let deviceId = connection.peerDeviceInfo?.deviceId,
               let paired = TrustStore.shared.pairedDevice(for: deviceId),
@@ -127,7 +127,7 @@ public final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked S
         guard paired.isClipboardSyncEnabled else { return }
 
         // If it's a connect packet, verify timestamp to prevent overwriting with stale content
-        if packet.type == "kdeconnect.clipboard.connect",
+        if packet.type == PacketType.clipboardConnect,
            Self.isStale(connectTimestamp: packet.int64(for: "timestamp", default: 0), localChange: lastLocalClipboardTimestamp) {
             TetherLog("[ClipboardPlugin] Ignoring the phone's clip from before this Mac's last change")
             return
@@ -137,7 +137,7 @@ public final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked S
 
         lastReceivedContent = content
         lastSentContent = content
-        if packet.type == "kdeconnect.clipboard.connect" {
+        if packet.type == PacketType.clipboardConnect {
             let packetTime = packet.int64(for: "timestamp", default: 0)
             if packetTime > 0 {
                 lastLocalClipboardTimestamp = packetTime
@@ -206,12 +206,12 @@ public final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked S
     /// Sends text to one device, as Send Clipboard does.
     public func send(_ content: String, to connection: DeviceConnection) {
         lastSentContent = content
-        connection.send(packet: NetworkPacket(type: "kdeconnect.clipboard", body: ["content": content]))
+        connection.send(packet: NetworkPacket(type: PacketType.clipboard, body: ["content": content]))
     }
 
     public func broadcastClipboard(content: String) {
         let packet = NetworkPacket(
-            type: "kdeconnect.clipboard",
+            type: PacketType.clipboard,
             body: ["content": content]
         )
         let targets: [DeviceConnection] = lock.withLock { activeConnections }

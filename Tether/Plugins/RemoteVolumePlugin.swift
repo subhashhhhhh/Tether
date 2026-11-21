@@ -31,7 +31,7 @@ public struct AudioSink: Sendable, Equatable, Identifiable {
 /// later sends incremental `{name, volume, muted}` updates as the phone changes.
 public final class RemoteVolumePlugin: ObservableObject, TetherPlugin, @unchecked Sendable {
 
-    public let supportedPacketTypes = ["kdeconnect.systemvolume"]
+    public let supportedPacketTypes = [PacketType.systemvolume]
 
     /// Sinks per device id.
     @Published public private(set) var sinks: [String: [AudioSink]] = [:]
@@ -51,7 +51,7 @@ public final class RemoteVolumePlugin: ObservableObject, TetherPlugin, @unchecke
     }
 
     public func handlePacket(connection: DeviceConnection, packet: NetworkPacket) {
-        guard packet.type == "kdeconnect.systemvolume",
+        guard packet.type == PacketType.systemvolume,
               let deviceId = connection.peerDeviceInfo?.deviceId else { return }
 
         // Full list refresh.
@@ -92,14 +92,14 @@ public final class RemoteVolumePlugin: ObservableObject, TetherPlugin, @unchecke
     }
 
     public func requestSinks(connection: DeviceConnection) {
-        let packet = NetworkPacket(type: "kdeconnect.systemvolume.request", body: ["requestSinks": true])
+        let packet = NetworkPacket(type: PacketType.systemvolumeRequest, body: ["requestSinks": true])
         connection.send(packet: packet)
     }
 
     /// Sets a sink's volume. `volume` is in the sink's own 0...maxVolume scale.
     public func setVolume(sinkName: String, volume: Int, connection: DeviceConnection) {
         let packet = NetworkPacket(
-            type: "kdeconnect.systemvolume.request",
+            type: PacketType.systemvolumeRequest,
             body: ["name": sinkName, "volume": volume]
         )
         connection.send(packet: packet)
@@ -107,7 +107,7 @@ public final class RemoteVolumePlugin: ObservableObject, TetherPlugin, @unchecke
 
     public func setMuted(sinkName: String, muted: Bool, connection: DeviceConnection) {
         let packet = NetworkPacket(
-            type: "kdeconnect.systemvolume.request",
+            type: PacketType.systemvolumeRequest,
             body: ["name": sinkName, "muted": muted]
         )
         connection.send(packet: packet)

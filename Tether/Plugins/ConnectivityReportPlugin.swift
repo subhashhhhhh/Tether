@@ -29,7 +29,7 @@ public struct SignalStrength: Sendable, Equatable {
 /// keyed by SIM subscription id, each holding `networkType` and `signalStrength`.
 public final class ConnectivityReportPlugin: ObservableObject, TetherPlugin, @unchecked Sendable {
 
-    public let supportedPacketTypes = ["kdeconnect.connectivity_report"]
+    public let supportedPacketTypes = [PacketType.connectivityReport]
 
     /// Reported signal per device, keyed by device id. A device can have several
     /// subscriptions (dual SIM), so the value is the strongest one.
@@ -51,7 +51,7 @@ public final class ConnectivityReportPlugin: ObservableObject, TetherPlugin, @un
     }
 
     public func handlePacket(connection: DeviceConnection, packet: NetworkPacket) {
-        guard packet.type == "kdeconnect.connectivity_report",
+        guard packet.type == PacketType.connectivityReport,
               let deviceId = connection.peerDeviceInfo?.deviceId,
               let strengths = packet.object(for: "signalStrengths") else { return }
 

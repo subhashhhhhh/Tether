@@ -94,7 +94,7 @@ final class PhoneFilesController {
         guard !started else { return }
         started = true
         PhoneMount.cleanUpStaleMounts()
-        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: nil) { _ in
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated {
                 for mount in PhoneFilesController.shared.mounts.values { mount.unmountNow() }
             }

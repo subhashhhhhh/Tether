@@ -510,7 +510,7 @@ public enum PayloadDownloader {
 
     /// Where in-flight downloads are written before a plugin claims them.
     public static var incomingDirectory: URL {
-        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let caches = URL.cachesDirectory
         return caches.appendingPathComponent("TetherIncoming", isDirectory: true)
     }
 

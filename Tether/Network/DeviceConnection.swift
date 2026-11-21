@@ -115,16 +115,37 @@ public final class DeviceConnection: @unchecked Sendable {
     public let isOutgoing: Bool
     public var targetDeviceId: String?
 
-    public private(set) var peerDeviceInfo: DeviceInfo?
+    // State the connection's queue changes and the main thread reads, so
+    // every access goes through stateLock.
+    private let stateLock = NSLock()
+    private var _peerDeviceInfo: DeviceInfo?
+    private var _pairState: PairState = .notPaired
+    private var _hasCertificateMismatch = false
+    private var _isClosed = false
+    private var _pendingPairingRequest = false
+
+    public private(set) var peerDeviceInfo: DeviceInfo? {
+        get { stateLock.withLock { _peerDeviceInfo } }
+        set { stateLock.withLock { _peerDeviceInfo = newValue } }
+    }
     public private(set) var peerCertificateFingerprint: String?
-    public private(set) var pairState: PairState = .notPaired
+    public private(set) var pairState: PairState {
+        get { stateLock.withLock { _pairState } }
+        set { stateLock.withLock { _pairState = newValue } }
+    }
     /// Set when the peer claims a paired device ID but presents a different
     /// certificate than the one pinned at pairing time.
-    public private(set) var hasCertificateMismatch = false
+    public private(set) var hasCertificateMismatch: Bool {
+        get { stateLock.withLock { _hasCertificateMismatch } }
+        set { stateLock.withLock { _hasCertificateMismatch = newValue } }
+    }
     public var isDisconnected: Bool { isClosed }
 
     public weak var delegate: DeviceConnectionDelegate?
-    public var pendingPairingRequest = false
+    public var pendingPairingRequest: Bool {
+        get { stateLock.withLock { _pendingPairingRequest } }
+        set { stateLock.withLock { _pendingPairingRequest = newValue } }
+    }
 
     private var socketFD: Int32 = -1
     private var sslContext: SSLContext?
@@ -138,7 +159,10 @@ public final class DeviceConnection: @unchecked Sendable {
     private var readChunk = [UInt8](repeating: 0, count: 64 * 1024)
     private var isEncrypted = false
     private let lock = NSLock()
-    private var isClosed = false
+    private var isClosed: Bool {
+        get { stateLock.withLock { _isClosed } }
+        set { stateLock.withLock { _isClosed = newValue } }
+    }
 
     public init(host: String, port: Int, targetDeviceId: String? = nil, isOutgoing: Bool) {
         self.host = host
@@ -411,7 +435,7 @@ public final class DeviceConnection: @unchecked Sendable {
 
     private func handlePacket(_ packet: NetworkPacket) {
         // Handshake stage: receiving full encrypted identity
-        if peerDeviceInfo == nil, packet.type == "kdeconnect.identity" {
+        if peerDeviceInfo == nil, packet.type == PacketType.identity {
             if let info = DeviceInfo.from(packet: packet) {
                 self.peerDeviceInfo = info
                 checkTrustStatus()
@@ -420,14 +444,14 @@ public final class DeviceConnection: @unchecked Sendable {
 
                 if self.pendingPairingRequest && self.pairState != .paired {
                     self.pendingPairingRequest = false
-                    self.requestPairing()
+                    self.requestPairingNow()
                 }
                 return
             }
         }
 
         // Handle pairing packet
-        if packet.type == "kdeconnect.pair" {
+        if packet.type == PacketType.pair {
             handlePairPacket(packet)
             return
         }
@@ -572,7 +596,14 @@ public final class DeviceConnection: @unchecked Sendable {
         pairingTimeoutWork = nil
     }
 
-    public func requestPairing() {
+    // Pairing changes the connection's state, which its queue owns; called
+    // from the main thread, the work hops there.
+    public func requestPairing() { connectionQueue.async { self.requestPairingNow() } }
+    public func acceptPairing() { connectionQueue.async { self.acceptPairingNow() } }
+    public func rejectPairing() { connectionQueue.async { self.rejectPairingNow() } }
+    public func unpair() { connectionQueue.async { self.unpairNow() } }
+
+    private func requestPairingNow() {
         guard isEncrypted else {
             TetherLog("[DeviceConnection] TLS not ready yet, queuing pairing request")
             pendingPairingRequest = true
@@ -581,7 +612,7 @@ public final class DeviceConnection: @unchecked Sendable {
         TetherLog("[DeviceConnection] Sending pair request to \(peerDeviceInfo?.deviceName ?? "peer")")
         if pairState == .requestedByPeer {
             // They asked first: answering is accepting.
-            acceptPairing()
+            acceptPairingNow()
             return
         }
         guard pairState == .notPaired else { return }
@@ -589,7 +620,7 @@ public final class DeviceConnection: @unchecked Sendable {
         startPairingTimeout()
         let timestamp = Int64(Date().timeIntervalSince1970)
         let packet = NetworkPacket(
-            type: "kdeconnect.pair",
+            type: PacketType.pair,
             body: [
                 "pair": true,
                 "timestamp": timestamp
@@ -599,7 +630,7 @@ public final class DeviceConnection: @unchecked Sendable {
         delegate?.deviceConnection(self, didUpdatePairState: .requested)
     }
 
-    public func acceptPairing() {
+    private func acceptPairingNow() {
         guard pairState == .requestedByPeer else {
             TetherLog("[DeviceConnection] No pairing request to accept from \(peerDeviceInfo?.deviceName ?? "peer"); it may have timed out")
             return
@@ -607,14 +638,14 @@ public final class DeviceConnection: @unchecked Sendable {
         TetherLog("[DeviceConnection] Accepting pairing request from \(peerDeviceInfo?.deviceName ?? "peer")")
         cancelPairingTimeout()
         // An accept carries no timestamp; see handlePairPacket.
-        send(packet: NetworkPacket(type: "kdeconnect.pair", body: ["pair": true]))
+        send(packet: NetworkPacket(type: PacketType.pair, body: ["pair": true]))
         completePairing()
     }
 
-    public func rejectPairing() {
+    private func rejectPairingNow() {
         TetherLog("[DeviceConnection] Rejecting pairing request from \(peerDeviceInfo?.deviceName ?? "peer")")
         cancelPairingTimeout()
-        let packet = NetworkPacket(type: "kdeconnect.pair", body: ["pair": false])
+        let packet = NetworkPacket(type: PacketType.pair, body: ["pair": false])
         send(packet: packet)
         self.pairState = .notPaired
         delegate?.deviceConnection(self, didUpdatePairState: .notPaired)
@@ -623,10 +654,10 @@ public final class DeviceConnection: @unchecked Sendable {
         }
     }
 
-    public func unpair() {
+    private func unpairNow() {
         guard let info = peerDeviceInfo else { return }
         TetherLog("[DeviceConnection] Unpairing from \(info.deviceName)")
-        let packet = NetworkPacket(type: "kdeconnect.pair", body: ["pair": false])
+        let packet = NetworkPacket(type: PacketType.pair, body: ["pair": false])
         send(packet: packet)
         self.pairState = .notPaired
         TrustStore.shared.remove(deviceId: info.deviceId, reason: "unpaired on this Mac while connected")
@@ -644,7 +675,7 @@ public final class DeviceConnection: @unchecked Sendable {
 
         guard let fingerprint = peerCertificateFingerprint, !fingerprint.isEmpty else {
             TetherLog("[DeviceConnection] Cannot complete pairing: no peer certificate to pin")
-            rejectPairing()
+            rejectPairingNow()
             return
         }
         self.pairState = .paired

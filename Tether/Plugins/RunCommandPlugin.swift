@@ -9,9 +9,9 @@ import Foundation
 import Combine
 
 public final class RunCommandPlugin: ObservableObject, TetherPlugin, @unchecked Sendable {
-    public static let requestType = "kdeconnect.runcommand.request"
-    public static let runCommandType = "kdeconnect.runcommand"
-    public static let outputType = "kdeconnect.runcommand.output"
+    public static let requestType = PacketType.runcommandRequest
+    public static let runCommandType = PacketType.runcommand
+    public static let outputType = PacketType.runcommandOutput
 
     public var supportedPacketTypes: [String] {
         [Self.requestType]

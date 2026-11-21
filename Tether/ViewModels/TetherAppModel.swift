@@ -243,7 +243,7 @@ public final class TetherAppModel {
         vm.onSendFiles = { urls in service.sendFiles(urls, to: deviceId) }
         vm.onFindPhone = { service.ringPhone(deviceId) }
         vm.onLockDevice = { service.lockPhone(deviceId) }
-        let canLock = connection.peerDeviceInfo?.incomingCapabilities.contains("kdeconnect.lock.request") ?? false
+        let canLock = connection.peerDeviceInfo?.incomingCapabilities.contains(PacketType.lockRequest) ?? false
         if vm.canLock != canLock { vm.canLock = canLock }
         // Tailscale addresses are in 100.64.0.0/10.
         let octets = connection.host.split(separator: ".").compactMap { Int($0) }

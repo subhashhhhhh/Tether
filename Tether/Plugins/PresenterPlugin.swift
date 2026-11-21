@@ -9,7 +9,7 @@ import Foundation
 import AppKit
 
 public final class PresenterPlugin: TetherPlugin, @unchecked Sendable {
-    public static let presenterType = "kdeconnect.presenter"
+    public static let presenterType = PacketType.presenter
 
     public var supportedPacketTypes: [String] {
         [Self.presenterType]

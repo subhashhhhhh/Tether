@@ -7,7 +7,7 @@ import Foundation
 import UserNotifications
 
 public final class PingPlugin: TetherPlugin, @unchecked Sendable {
-    public let supportedPacketTypes = ["kdeconnect.ping"]
+    public let supportedPacketTypes = [PacketType.ping]
 
     public init() {}
 
@@ -15,7 +15,7 @@ public final class PingPlugin: TetherPlugin, @unchecked Sendable {
     public func onDisconnected(connection: DeviceConnection) {}
 
     public func handlePacket(connection: DeviceConnection, packet: NetworkPacket) {
-        guard packet.type == "kdeconnect.ping" else { return }
+        guard packet.type == PacketType.ping else { return }
 
         let message = packet.string(for: "message") ?? "Ping!"
         let deviceName = connection.peerDeviceInfo?.deviceName ?? "Device"
@@ -33,7 +33,7 @@ public final class PingPlugin: TetherPlugin, @unchecked Sendable {
 
         UNUserNotificationCenter.current().add(request) { error in
             if let error = error {
-                print("[PingPlugin] Error delivering ping notification: \(error)")
+                TetherLog("[PingPlugin] Error delivering ping notification: \(error)")
             }
         }
     }
@@ -43,7 +43,7 @@ public final class PingPlugin: TetherPlugin, @unchecked Sendable {
         if let msg = message, !msg.isEmpty {
             body["message"] = msg
         }
-        let packet = NetworkPacket(type: "kdeconnect.ping", body: body)
+        let packet = NetworkPacket(type: PacketType.ping, body: body)
         connection.send(packet: packet)
     }
 }

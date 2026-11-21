@@ -14,8 +14,8 @@ import CoreAudio
 import Foundation
 
 public final class MacVolumePlugin: TetherPlugin, @unchecked Sendable {
-    static let requestType = "kdeconnect.systemvolume.request"
-    static let reportType = "kdeconnect.systemvolume"
+    static let requestType = PacketType.systemvolumeRequest
+    static let reportType = PacketType.systemvolume
     /// The one sink the phone sees: whichever device is the Mac's output.
     private static let sinkName = "default"
 

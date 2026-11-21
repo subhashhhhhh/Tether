@@ -13,11 +13,11 @@ import UserNotifications
 /// a JPEG `phoneThumbnail` when the phone knows the caller. `isCancel` marks a
 /// previously announced event as no longer relevant.
 public final class TelephonyPlugin: TetherPlugin, @unchecked Sendable {
-    static let requestMuteType = "kdeconnect.telephony.request_mute"
+    static let requestMuteType = PacketType.telephonyRequestMute
     static let callCategory = "TETHER_CALL_CATEGORY"
     static let muteAction = "TETHER_MUTE_RINGER_ACTION"
 
-    public let supportedPacketTypes = ["kdeconnect.telephony"]
+    public let supportedPacketTypes = [PacketType.telephony]
 
     public init() {}
 
@@ -25,7 +25,7 @@ public final class TelephonyPlugin: TetherPlugin, @unchecked Sendable {
     public func onDisconnected(connection: DeviceConnection) {}
 
     public func handlePacket(connection: DeviceConnection, packet: NetworkPacket) {
-        guard packet.type == "kdeconnect.telephony",
+        guard packet.type == PacketType.telephony,
               let deviceId = connection.peerDeviceInfo?.deviceId else { return }
 
         let event = packet.string(for: "event") ?? ""

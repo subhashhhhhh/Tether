@@ -10,8 +10,8 @@ import UserNotifications
 import UniformTypeIdentifiers
 
 public final class SharePlugin: ObservableObject, TetherPlugin, @unchecked Sendable {
-    public static let shareRequestType = "kdeconnect.share.request"
-    public static let shareUpdateType = "kdeconnect.share.request.update"
+    public static let shareRequestType = PacketType.shareRequest
+    public static let shareUpdateType = PacketType.shareRequestUpdate
 
     public var supportedPacketTypes: [String] {
         [Self.shareRequestType, Self.shareUpdateType]
@@ -112,7 +112,7 @@ public final class SharePlugin: ObservableObject, TetherPlugin, @unchecked Senda
         }
 
         let filename = matchingItem?.filename ?? SafeFilename.sanitize(packet.string(for: "filename"))
-        let downloadsDir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
+        let downloadsDir = URL.downloadsDirectory
         let destinationURL = SafeFilename.uniqueURL(in: downloadsDir, for: filename)
         let itemId = matchingItem?.id
 
@@ -299,12 +299,6 @@ public final class SharePlugin: ObservableObject, TetherPlugin, @unchecked Senda
             if let index = self.transfers.firstIndex(where: { $0.id == id }) {
                 self.transfers[index].status = .cancelled
             }
-        }
-    }
-
-    public func clearCompleted() {
-        DispatchQueue.main.async {
-            self.transfers.removeAll(where: { $0.status == .completed || $0.status == .cancelled })
         }
     }
 
