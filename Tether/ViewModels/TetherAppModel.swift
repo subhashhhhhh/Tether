@@ -314,6 +314,7 @@ public final class TetherAppModel {
             update(dev, \.commands, service.runCommandPlugin.commands)
             update(dev, \.notifications, service.notificationPlugin.notifications[id] ?? [])
             update(dev, \.receivedClipboard, service.clipboardPlugin.received[id] ?? [])
+            update(dev, \.appGlyphs, service.notificationPlugin.appGlyphs[id] ?? [:])
 
             let nowPlaying = service.mediaControlPlugin.nowPlaying[id]
             update(dev, \.nowPlayingTitle, nowPlaying?.title)

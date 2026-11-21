@@ -17,14 +17,75 @@ struct OverviewPane: View {
     @State private var isRinging = false
 
     var body: some View {
-        ScrollView {
-            details
-                .frame(maxWidth: 600, alignment: .leading)
-                .padding(.horizontal, 32)
-                .padding(.vertical, 28)
-                .frame(maxWidth: .infinity)
+        // A list, so the notifications here swipe away as they do on their
+        // own page. Everything else is a plain row with no separator.
+        List {
+            header
+                .overviewRow(top: 20)
+
+            if device.hasNowPlaying {
+                NowPlayingPanel(device: device)
+                    .overviewRow()
+            }
+
+            if !device.notifications.isEmpty {
+                PanelHeader("Notifications") {
+                    Button("Show All") { onSelectSection(.notifications) }
+                        .buttonStyle(.link)
+                }
+                .overviewRow(bottom: 2)
+
+                let latest = Array(device.notifications.prefix(3))
+                ForEach(Array(latest.enumerated()), id: \.element.id) { index, item in
+                    NotificationPreviewRow(item: item, device: device)
+                        .padding(.horizontal, Self.margin)
+                        .frame(maxWidth: Self.column + 2 * Self.margin)
+                        .frame(maxWidth: .infinity)
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(GroupCardBackground(isFirst: index == 0, isLast: index == latest.count - 1,
+                                                               maxWidth: Self.column, margin: Self.margin))
+                        .overlay(alignment: .top) {
+                            if index > 0 {
+                                Divider()
+                                    .frame(maxWidth: Self.column - 32)
+                                    .padding(.horizontal, Self.margin + 16)
+                            }
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            if item.isDismissable {
+                                Button("Dismiss", systemImage: "xmark", role: .destructive) { device.dismiss(item) }
+                            }
+                        }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                PanelHeader("Files") {
+                    if device.transfers.count > 3 {
+                        Button("Show All") { onSelectSection(.files) }
+                            .buttonStyle(.link)
+                    }
+                }
+                TransfersCard(device: device, limit: 3)
+
+                Text("Files from \(device.name) are saved in Downloads.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 4)
+            }
+            .overviewRow(top: 18)
+
+            RemoteInputRow()
+                .overviewRow()
         }
+        .listStyle(.inset)
+        .scrollContentBackground(.hidden)
     }
+
+    /// The page's column and its margin in a narrow window.
+    fileprivate static let column: CGFloat = 600
+    fileprivate static let margin: CGFloat = 32
 
     // MARK: Header and actions
 
@@ -87,51 +148,17 @@ struct OverviewPane: View {
         }
     }
 
-    // MARK: Details
+}
 
-    private var details: some View {
-        VStack(alignment: .leading, spacing: 28) {
-            header
-
-            if device.hasNowPlaying {
-                NowPlayingPanel(device: device)
-            }
-
-            if !device.notifications.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
-                    PanelHeader("Notifications") {
-                        if device.notifications.count > 3 {
-                            Button("Show All") { onSelectSection(.notifications) }
-                                .buttonStyle(.link)
-                        }
-                    }
-                    VStack(spacing: 0) {
-                        ForEach(Array(device.notifications.prefix(3).enumerated()), id: \.element.id) { index, item in
-                            if index > 0 { Divider().padding(.leading, 16) }
-                            NotificationPreviewRow(item: item, device: device)
-                        }
-                    }
-                    .contentCard()
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 10) {
-                PanelHeader("Files") {
-                    if device.transfers.count > 3 {
-                        Button("Show All") { onSelectSection(.files) }
-                            .buttonStyle(.link)
-                    }
-                }
-                TransfersCard(device: device, limit: 3)
-
-                Text("Files from \(device.name) are saved in Downloads.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 4)
-            }
-
-            RemoteInputRow()
-        }
+private extension View {
+    /// A row of the overview's list that isn't a notification: kept to the
+    /// page's column, with no separator and nothing behind it.
+    func overviewRow(top: CGFloat = 12, bottom: CGFloat = 12) -> some View {
+        frame(maxWidth: OverviewPane.column, alignment: .leading)
+            .frame(maxWidth: .infinity)
+            .listRowInsets(EdgeInsets(top: top, leading: OverviewPane.margin, bottom: bottom, trailing: OverviewPane.margin))
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
     }
 }
 
@@ -268,7 +295,8 @@ private struct NotificationPreviewRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .center, spacing: 6) {
+                NotificationAppIcon(appName: item.appName, glyph: device.appGlyphs[item.appName], size: 18)
                 Text(item.appName)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)

@@ -260,10 +260,21 @@ private struct ConversationView: View {
                         // New Message at the conversation's top-leading
                         // corner, where Messages has it.
                         .overlay(alignment: .topLeading) {
-                            GlassCircleButton(title: "New Message", systemImage: "square.and.pencil", showsTitle: false, size: 36) {
-                                device.composeRequests += 1
+                            // Drawn to the toolbar's own measure, a 36 pt glass
+                            // circle with its centre 26 pt down, so it reads as
+                            // one of the toolbar's buttons. A glass button style
+                            // adds padding of its own and comes out larger.
+                            Button { device.composeRequests += 1 } label: {
+                                Image(systemName: "square.and.pencil")
+                                    .font(.system(size: 16, weight: .medium))
+                                    .frame(width: 36, height: 36)
+                                    .glassCircle()
+                                    .contentShape(.circle)
                             }
+                            .buttonStyle(.plain)
                             .keyboardShortcut("n", modifiers: .command)
+                            .help("New Message")
+                            .accessibilityLabel("New Message")
                             .padding(.leading, 12)
                             .padding(.top, 8)
                         }

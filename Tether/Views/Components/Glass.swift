@@ -67,6 +67,16 @@ extension View {
         }
     }
 
+    /// A round control's glass, at exactly the view's size.
+    @ViewBuilder
+    func glassCircle() -> some View {
+        if #available(macOS 26.0, *) {
+            self.glassEffect(.regular.interactive(), in: .circle)
+        } else {
+            self.background(.regularMaterial, in: .circle)
+        }
+    }
+
     /// A small text button: glass on macOS 26, bordered before.
     @ViewBuilder
     func glassButton() -> some View {
@@ -136,6 +146,29 @@ struct GlassCircleButton: View {
                 .background(isProminent ? AnyShapeStyle(.tint) : AnyShapeStyle(.regularMaterial), in: .circle)
                 .overlay(Circle().strokeBorder(.separator.opacity(0.6), lineWidth: 0.5))
         }
+    }
+}
+
+/// The fill behind one row of a group in a list, so a run of rows reads as
+/// one card: rounded at the top of the first and the bottom of the last. A
+/// list is used where rows swipe; this keeps the grouping a card would give.
+struct GroupCardBackground: View {
+    let isFirst: Bool
+    let isLast: Bool
+    /// The column the card keeps to, and its margin in a narrow window.
+    var maxWidth: CGFloat = 680
+    var margin: CGFloat = 16
+
+    var body: some View {
+        UnevenRoundedRectangle(
+            topLeadingRadius: isFirst ? 16 : 0, bottomLeadingRadius: isLast ? 16 : 0,
+            bottomTrailingRadius: isLast ? 16 : 0, topTrailingRadius: isFirst ? 16 : 0,
+            style: .continuous
+        )
+        .fill(Color(nsColor: .quaternarySystemFill))
+        .frame(maxWidth: maxWidth)
+        .padding(.horizontal, margin)
+        .frame(maxWidth: .infinity)
     }
 }
 

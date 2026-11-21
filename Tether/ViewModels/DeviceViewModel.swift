@@ -50,6 +50,8 @@ public final class DeviceViewModel: Identifiable, Hashable {
     public var notifications: [PhoneNotification]
     /// The last few things the device sent to this Mac's clipboard, newest first.
     public var receivedClipboard: [String] = []
+    /// Each app's status-bar glyph from the phone, by app name.
+    public var appGlyphs: [String: Data] = [:]
     /// Bumped by the toolbar's New Message button; the Messages pane starts a draft.
     public var composeRequests = 0
 

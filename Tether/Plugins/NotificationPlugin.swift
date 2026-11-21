@@ -50,6 +50,11 @@ public struct PhoneNotification: Identifiable, Hashable, Sendable {
 public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin, UNUserNotificationCenterDelegate, @unchecked Sendable {
     /// Active phone notifications per device, newest first.
     @Published public private(set) var notifications: [String: [PhoneNotification]] = [:]
+    /// Each app's status-bar glyph, by device then app name. The phone sends
+    /// it for a notification with no picture of its own, and it is the one
+    /// image that stands for the app rather than for a person, so it's kept
+    /// and shown for every notification from that app.
+    @Published public private(set) var appGlyphs: [String: [String: Data]] = [:]
 
     public let supportedPacketTypes = [
         "kdeconnect.notification",
@@ -155,6 +160,7 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
             return
         }
         activeConnections[deviceId] = connection
+        loadGlyphsIfNeeded(for: deviceId)
 
         // Request active notifications from remote phone
         let requestPacket = NetworkPacket(
@@ -188,6 +194,44 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
             body: ["requestReplyId": replyId, "message": text]
         ))
         TetherLog("[NotificationPlugin] Sent notification reply to \(notification.deviceId)")
+    }
+
+    // MARK: - App glyphs
+
+    private static let glyphQueue = DispatchQueue(label: "com.subhashh.tether.app-glyphs", qos: .utility)
+
+    private static func glyphFile(for deviceId: String) -> URL? {
+        // The ID comes from the peer; only a plain one names a file.
+        guard !deviceId.isEmpty, deviceId.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" }),
+              let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first else { return nil }
+        let directory = caches.appendingPathComponent("Tether/AppGlyphs", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.appendingPathComponent(deviceId + ".plist")
+    }
+
+    /// Reads a device's saved glyphs the first time they're needed.
+    private func loadGlyphsIfNeeded(for deviceId: String) {
+        guard appGlyphs[deviceId] == nil else { return }
+        appGlyphs[deviceId] = [:]
+        guard let url = Self.glyphFile(for: deviceId) else { return }
+        Self.glyphQueue.async {
+            guard let data = try? Data(contentsOf: url),
+                  let saved = try? PropertyListDecoder().decode([String: Data].self, from: data) else { return }
+            DispatchQueue.main.async {
+                // What arrived meanwhile is newer than what was saved.
+                self.appGlyphs[deviceId] = saved.merging(self.appGlyphs[deviceId] ?? [:]) { _, new in new }
+            }
+        }
+    }
+
+    private func rememberGlyph(of item: PhoneNotification) {
+        loadGlyphsIfNeeded(for: item.deviceId)
+        guard item.imageIsGlyph, let glyph = item.imageData, appGlyphs[item.deviceId]?[item.appName] != glyph else { return }
+        appGlyphs[item.deviceId, default: [:]][item.appName] = glyph
+        guard let url = Self.glyphFile(for: item.deviceId), let glyphs = appGlyphs[item.deviceId] else { return }
+        Self.glyphQueue.async {
+            if let data = try? PropertyListEncoder().encode(glyphs) { try? data.write(to: url, options: .atomic) }
+        }
     }
 
     /// Presses one of the notification's own buttons on the phone.
@@ -263,6 +307,7 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
             // The phone can send a button with no title; there's nothing to show for it.
             actions: packet.stringArray(for: "actions").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
         )
+        rememberGlyph(of: item)
         var list = notifications[deviceId] ?? []
         list.removeAll { $0.id == notifId }
         list.insert(item, at: 0)
@@ -322,6 +367,7 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
            let png = images.store(data, deviceId: deviceId, hash: packet.string(for: "payloadHash")),
            let index = notifications[deviceId]?.firstIndex(where: { $0.id == id }) {
             notifications[deviceId]?[index].imageData = png
+            if let item = notifications[deviceId]?[index] { rememberGlyph(of: item) }
         }
         finishWaiting(key, token: token)
     }

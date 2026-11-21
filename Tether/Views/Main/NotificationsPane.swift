@@ -25,33 +25,46 @@ struct NotificationsPane: View {
                 description: Text("Notifications on \(device.name) show up here and in Notification Center. Turn on notification sync in KDE Connect on your phone if they don't.")
             )
         } else {
-            // A list, so a row can be swiped away with two fingers as on the phone.
+            // A list, so a row can be swiped away with two fingers as on the
+            // phone. Each app is one card: its icon and name on top, then its
+            // notifications, so it's plain which app a row belongs to and
+            // where that app's rows end.
             List {
                 ForEach(groups, id: \.app) { group in
-                    // An ordinary row, not a section header: a list pins its
-                    // headers and gives them a band of their own.
-                    HStack {
+                    HStack(spacing: 8) {
+                        NotificationAppIcon(appName: group.app, glyph: device.appGlyphs[group.app], size: 24)
                         Text(group.app)
                             .font(.title3.weight(.semibold))
                         Spacer()
                         Text(group.items.count, format: .number)
                             .foregroundStyle(.secondary)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 14)
-                    .padding(.bottom, 2)
+                    .padding(.horizontal, 4)
+                    .padding(.top, 20)
+                    .padding(.bottom, 6)
                     .frame(maxWidth: 680)
+                    .padding(.horizontal, 16)
                     .frame(maxWidth: .infinity)
                     .listRowInsets(EdgeInsets())
                     .listRowSeparator(.hidden)
 
-                    ForEach(group.items) { notification in
+                    ForEach(Array(group.items.enumerated()), id: \.element.id) { index, notification in
                         // The row is the window's width, so a swipe carries
                         // it to the edge; its content keeps to the column.
                         NotificationRow(notification: notification, device: device)
                             .frame(maxWidth: 680)
+                            .padding(.horizontal, 16)
                             .frame(maxWidth: .infinity)
                             .listRowInsets(EdgeInsets())
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(GroupCardBackground(isFirst: index == 0, isLast: index == group.items.count - 1))
+                            .overlay(alignment: .top) {
+                                if index > 0 {
+                                    Divider()
+                                        .frame(maxWidth: 680 - 32)
+                                        .padding(.horizontal, 32)
+                                }
+                            }
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                 if notification.isDismissable {
                                     Button("Dismiss", systemImage: "xmark", role: .destructive) {
@@ -99,36 +112,30 @@ private struct NotificationRow: View {
 
     @State private var isReplying = false
     @State private var reply = ""
+    @State private var isExpanded = false
     @FocusState private var isReplyFocused: Bool
+
+    /// A long message is cut to a few lines until asked for, so one
+    /// notification can't push the rest of the page out of sight.
+    private var isLong: Bool {
+        notification.text.count > 280 || notification.text.filter(\.isNewline).count > 3
+    }
+
+    /// A picture of who it's from. The app's own glyph is on the group, not here.
+    private var photo: NSImage? {
+        guard !notification.imageIsGlyph, let data = notification.imageData else { return nil }
+        return NotificationAppIcon.image(data)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .center) {
-                if notification.imageIsGlyph, let data = notification.imageData, let image = NSImage(data: data) {
-                    // Drawn like Android's status bar: the app's symbol in the text colour.
-                    Image(nsImage: image)
-                        .renderingMode(.template)
+            HStack(alignment: .center, spacing: 8) {
+                if let photo {
+                    Image(nsImage: photo)
                         .resizable()
-                        .scaledToFit()
-                        .foregroundStyle(.secondary)
-                        .frame(width: 18, height: 18)
-                        .frame(width: 32, height: 32)
-                        .background(.quaternary, in: .rect(cornerRadius: 8, style: .continuous))
-                        .accessibilityLabel("\(notification.appName) icon")
-                } else if let data = notification.imageData, let image = NSImage(data: data) {
-                    Image(nsImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(width: 32, height: 32)
-                        .clipShape(.rect(cornerRadius: 6))
-                        .accessibilityLabel("Image from \(notification.appName)")
-                } else {
-                    // The phone sent no picture. An initial reads better than a blank.
-                    Text(notification.appName.prefix(1).uppercased())
-                        .font(.headline)
-                        .foregroundStyle(.secondary)
-                        .frame(width: 32, height: 32)
-                        .background(.quaternary, in: .rect(cornerRadius: 8, style: .continuous))
+                        .scaledToFill()
+                        .frame(width: 28, height: 28)
+                        .clipShape(.circle)
                         .accessibilityHidden(true)
                 }
                 Text(notification.title.isEmpty ? notification.appName : notification.title)
@@ -143,7 +150,13 @@ private struct NotificationRow: View {
                 // The message is the content, so it isn't greyed out.
                 Text(notification.text)
                     .textSelection(.enabled)
+                    .lineLimit(isLong && !isExpanded ? 4 : nil)
                     .fixedSize(horizontal: false, vertical: true)
+                if isLong {
+                    Button(isExpanded ? "Show Less" : "Show More") { isExpanded.toggle() }
+                        .buttonStyle(.link)
+                        .font(.callout)
+                }
             }
 
             if isReplying {
@@ -169,6 +182,7 @@ private struct NotificationRow: View {
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(.rect)
+        .animation(.default, value: isExpanded)
         .contextMenu {
             if let code = notification.code {
                 Button("Copy Code \(code)") { NotificationPlugin.copyToPasteboard(code) }
@@ -196,6 +210,44 @@ private struct NotificationRow: View {
 }
 
 /// Copies a verification code and says so for a moment.
+/// The app a notification came from: its status-bar glyph from the phone,
+/// drawn in the text colour as Android draws it, or its initial until the
+/// phone has sent one. The phone never sends an app's coloured icon.
+struct NotificationAppIcon: View {
+    let appName: String
+    let glyph: Data?
+    var size: CGFloat = 20
+
+    private static let images = NSCache<NSData, NSImage>()
+
+    /// Decoded once per picture, not on every redraw.
+    static func image(_ data: Data) -> NSImage? {
+        if let cached = images.object(forKey: data as NSData) { return cached }
+        guard let image = NSImage(data: data) else { return nil }
+        images.setObject(image, forKey: data as NSData)
+        return image
+    }
+
+    var body: some View {
+        Group {
+            if let glyph, let image = Self.image(glyph) {
+                Image(nsImage: image)
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .padding(size * 0.2)
+            } else {
+                Text(appName.prefix(1).uppercased())
+                    .font(.system(size: size * 0.52, weight: .semibold, design: .rounded))
+            }
+        }
+        .foregroundStyle(.secondary)
+        .frame(width: size, height: size)
+        .background(.quaternary, in: .rect(cornerRadius: size * 0.26, style: .continuous))
+        .accessibilityHidden(true)
+    }
+}
+
 /// What can be done about a notification, as small buttons: copy its code,
 /// reply, the buttons the notification has on the phone, and dismiss.
 struct NotificationQuickActions: View {

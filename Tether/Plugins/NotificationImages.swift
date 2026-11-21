@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import ImageIO
 import UniformTypeIdentifiers
 import UserNotifications
@@ -8,15 +9,53 @@ import UserNotifications
 final class NotificationImages {
     nonisolated static let maximumPayloadSize: Int64 = 1_048_576
     private let cache = NSCache<NSString, NSData>()
+    private static let ioQueue = DispatchQueue(label: "com.subhashh.tether.notification-images", qos: .utility)
+    /// Kept on disk as well: the phone sends a picture once and afterwards
+    /// names it by hash, so without this every relaunch loses them all.
+    private static let directory: URL? = {
+        // Tests run inside the app; they get a folder of their own, so
+        // clearing the store there can't wipe the real one.
+        let isTesting = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+        let base = isTesting
+            ? FileManager.default.temporaryDirectory.appendingPathComponent("TetherTests", isDirectory: true)
+            : FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+        guard let caches = base else { return nil }
+        let url = caches.appendingPathComponent("Tether/NotificationImages", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }()
+    private static let diskLimit = 400
 
     init() {
         cache.countLimit = 128
         cache.totalCostLimit = 8 * 1_048_576
+        Self.ioQueue.async { Self.prune() }
     }
 
     func image(deviceId: String, hash: String?) -> Data? {
         guard let hash, !hash.isEmpty else { return nil }
-        return cache.object(forKey: key(deviceId: deviceId, hash: hash)) as Data?
+        let key = key(deviceId: deviceId, hash: hash)
+        if let cached = cache.object(forKey: key) as Data? { return cached }
+        // At most 128 px square, already validated when it was stored.
+        guard let url = Self.fileURL(for: key), let data = try? Data(contentsOf: url) else { return nil }
+        cache.setObject(data as NSData, forKey: key, cost: data.count)
+        return data
+    }
+
+    private static func fileURL(for key: NSString) -> URL? {
+        let digest = SHA256.hash(data: Data((key as String).utf8)).map { String(format: "%02x", $0) }.joined()
+        return directory?.appendingPathComponent(digest + ".png")
+    }
+
+    /// Drops the oldest pictures beyond the limit.
+    private static func prune() {
+        guard let directory,
+              let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.contentModificationDateKey]),
+              files.count > diskLimit else { return }
+        let dated = files.map { ($0, (try? $0.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast) }
+        for (url, _) in dated.sorted(by: { $0.1 < $1.1 }).prefix(files.count - diskLimit) {
+            try? FileManager.default.removeItem(at: url)
+        }
     }
 
     /// Validate and downsample before retaining any peer-supplied image. The
@@ -38,12 +77,25 @@ final class NotificationImages {
         guard CGImageDestinationFinalize(destination) else { return nil }
         let png = output as Data
         if let hash, !hash.isEmpty {
-            cache.setObject(png as NSData, forKey: key(deviceId: deviceId, hash: hash), cost: png.count)
+            let key = key(deviceId: deviceId, hash: hash)
+            cache.setObject(png as NSData, forKey: key, cost: png.count)
+            if let url = Self.fileURL(for: key) {
+                Self.ioQueue.async { try? png.write(to: url, options: .atomic) }
+            }
         }
         return png
     }
 
-    func removeAll() { cache.removeAllObjects() }
+    /// Forgets every picture, in memory and on disk. Waits for the disk, so
+    /// a picture can't be read back in the moment before it's deleted.
+    func removeAll() {
+        cache.removeAllObjects()
+        Self.ioQueue.sync {
+            guard let directory = Self.directory,
+                  let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil) else { return }
+            for file in files { try? FileManager.default.removeItem(at: file) }
+        }
+    }
 
     /// Android's status-bar icon: one flat colour on transparency. The phone
     /// sends it when a notification has no picture of its own (Tailscale,
