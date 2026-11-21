@@ -62,12 +62,15 @@ struct InitialsAvatar: View {
         photo.flatMap { ImageCache.image($0, maxPixels: Int(size * 2)) }
     }
 
-    private var initials: String {
+    private var initials: String { Self.initials(of: name) ?? "#" }
+
+    /// The first letter of up to two words, or nil when there are none.
+    static func initials(of name: String) -> String? {
         let letters = name
             .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
             .prefix(2)
             .compactMap(\.first)
-        return letters.isEmpty ? "#" : String(letters).uppercased()
+        return letters.isEmpty ? nil : String(letters).uppercased()
     }
 
     private var isPhoneNumber: Bool {
@@ -135,81 +138,20 @@ struct SearchPill: View {
 
 // MARK: - Files
 
-@MainActor
-enum FileIcon {
-    private static var cache: [String: NSImage] = [:]
-
-    /// Finder's icon for the file's type, looked up once per extension.
-    static func image(for filename: String) -> NSImage {
-        let ext = (filename as NSString).pathExtension.lowercased()
-        if let cached = cache[ext] { return cached }
-        let icon = NSWorkspace.shared.icon(for: UTType(filenameExtension: ext) ?? .data)
-        cache[ext] = icon
-        return icon
-    }
-}
-
-enum FilePicker {
-    /// Shows an open panel for choosing files to send. Returns an empty array on cancel.
-    @MainActor
-    static func chooseFiles(sendingTo deviceName: String) -> [URL] {
-        let panel = NSOpenPanel()
-        panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
-        panel.canChooseFiles = true
-        panel.prompt = "Send"
-        panel.message = "Choose files to send to \(deviceName)"
-        return panel.runModal() == .OK ? panel.urls : []
-    }
-}
-
 // MARK: - Fingerprint
-
-enum FingerprintFormat {
-    /// Splits a colon-separated SHA-256 fingerprint into four rows of eight bytes
-    /// so a person can compare it at a glance.
-    static func rows(_ fingerprint: String) -> [String] {
-        let bytes = fingerprint.uppercased().split(separator: ":").map(String.init)
-        return stride(from: 0, to: bytes.count, by: 8).map {
-            bytes[$0..<min($0 + 8, bytes.count)].joined(separator: " ")
-        }
-    }
-}
 
 // MARK: - Motion
 
-extension EnvironmentValues {
-    /// Tether's Reduce motion setting or the system's, whichever is on.
-    /// Set by `tetherMotionPreference()` at each window's root.
-    @Entry var reducesMotion = false
-}
-
-enum MotionPreference {
-    /// Settings › General › "Reduce motion". Off by default: Tether's few
-    /// animations are short, and people who want them gone can say so here.
-    static let key = "tether_reduce_motion"
-}
-
-private struct MotionPreferenceModifier: ViewModifier {
-    @AppStorage(MotionPreference.key) private var tetherReduceMotion = false
-    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-
-    /// The system's Reduce Motion counts as well as Tether's own setting.
-    private var reduceMotion: Bool { tetherReduceMotion || systemReduceMotion }
-
-    func body(content: Content) -> some View {
-        content.environment(\.reducesMotion, reduceMotion).transaction { transaction in
-            if reduceMotion {
-                transaction.disablesAnimations = true
-                transaction.animation = nil
-            }
+enum DeviceSymbols {
+    /// A battery symbol for a level, with a bolt while charging.
+    static func battery(_ percent: Int, charging: Bool) -> String {
+        if charging { return "battery.100percent.bolt" }
+        switch percent {
+        case ..<13: return "battery.0percent"
+        case ..<38: return "battery.25percent"
+        case ..<63: return "battery.50percent"
+        case ..<88: return "battery.75percent"
+        default: return "battery.100percent"
         }
-    }
-}
-
-extension View {
-    /// Applies the user's Tether motion preference to this view and everything inside it.
-    func tetherMotionPreference() -> some View {
-        modifier(MotionPreferenceModifier())
     }
 }

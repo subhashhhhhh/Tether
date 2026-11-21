@@ -11,13 +11,13 @@ import Combine
 import AppKit
 import UserNotifications
 
-public struct PairRequestViewModel: Identifiable, Sendable {
-    public let id: String
-    public let deviceName: String
-    public let deviceType: DeviceType
-    public let fingerprint: String?
+struct PairRequestViewModel: Identifiable, Sendable {
+    let id: String
+    let deviceName: String
+    let deviceType: DeviceType
+    let fingerprint: String?
 
-    public init(id: String, deviceName: String, deviceType: DeviceType = .phone, fingerprint: String? = nil) {
+    init(id: String, deviceName: String, deviceType: DeviceType = .phone, fingerprint: String? = nil) {
         self.id = id
         self.deviceName = deviceName
         self.deviceType = deviceType
@@ -27,24 +27,24 @@ public struct PairRequestViewModel: Identifiable, Sendable {
 
 @Observable
 @MainActor
-public final class TetherAppModel {
-    public static let shared = TetherAppModel()
+final class TetherAppModel {
+    static let shared = TetherAppModel()
 
-    public var connectedDevices: [DeviceViewModel] = []
+    var connectedDevices: [DeviceViewModel] = []
     /// The SMS revision each device view model's threads were last built
     /// from; per view model, since one can be replaced by a fresh one.
     @ObservationIgnored private var smsRevisionSeen: [ObjectIdentifier: Int] = [:]
-    public var availableDevices: [DeviceViewModel] = []
-    public var offlineDevices: [DeviceViewModel] = []
-    public var incomingPairRequest: PairRequestViewModel?
-    public var selectedDeviceId: String?
-    public var isShowingConnectByIP = false
+    var availableDevices: [DeviceViewModel] = []
+    var offlineDevices: [DeviceViewModel] = []
+    var incomingPairRequest: PairRequestViewModel?
+    var selectedDeviceId: String?
+    var isShowingConnectByIP = false
     /// Set by the menu bar popover; the main window shows it and clears it.
     var sectionRequest: SectionRequest?
-    public var isRunning: Bool = false
-    public var notificationAuthStatus: UNAuthorizationStatus = .authorized
+    var isRunning: Bool = false
+    var notificationAuthStatus: UNAuthorizationStatus = .authorized
 
-    public var isNotificationPermissionDenied: Bool {
+    var isNotificationPermissionDenied: Bool {
         notificationAuthStatus == .denied
     }
 
@@ -53,30 +53,30 @@ public final class TetherAppModel {
     @ObservationIgnored private var isMockMode: Bool = false
 
     /// Paired devices first (connected, then offline), as shown in the sidebar.
-    public var pairedDevices: [DeviceViewModel] {
+    var pairedDevices: [DeviceViewModel] {
         connectedDevices + offlineDevices
     }
 
-    public var allDevices: [DeviceViewModel] {
+    var allDevices: [DeviceViewModel] {
         connectedDevices + availableDevices + offlineDevices
     }
 
-    public var selectedDevice: DeviceViewModel? {
+    var selectedDevice: DeviceViewModel? {
         guard let id = selectedDeviceId else { return nil }
         return allDevices.first { $0.id == id }
     }
 
     /// The device the menu bar acts on: the selected one if connected, else the first connected.
-    public var primaryDevice: DeviceViewModel? {
+    var primaryDevice: DeviceViewModel? {
         if let selected = selectedDevice, selected.isConnected { return selected }
         return connectedDevices.first
     }
 
-    public var statusMenuBarImageName: String {
+    var statusMenuBarImageName: String {
         connectedDevices.isEmpty ? "MenuBarDisconnected" : "MenuBarConnected"
     }
 
-    public init(isMock: Bool = false) {
+    init(isMock: Bool = false) {
         self.isMockMode = isMock
         if !isMock {
             setupLiveSubscriptions()
@@ -152,7 +152,7 @@ public final class TetherAppModel {
         return vm
     }
 
-    public func rebuildDeviceLists() {
+    func rebuildDeviceLists() {
         guard !isMockMode else { return }
         let service = TetherService.shared
         let trustStore = TrustStore.shared
@@ -365,18 +365,18 @@ public final class TetherAppModel {
 
     // MARK: - Actions
 
-    public func acceptIncomingPairRequest(_ request: PairRequestViewModel) {
+    func acceptIncomingPairRequest(_ request: PairRequestViewModel) {
         // The service clears its request when it accepts and the change reaches
         // us; clearing here too would hide a newer request it refused to accept.
         TetherService.shared.acceptIncomingPairRequest(deviceId: request.id, fingerprint: request.fingerprint)
     }
 
-    public func rejectIncomingPairRequest() {
+    func rejectIncomingPairRequest() {
         TetherService.shared.rejectIncomingPairRequest()
         incomingPairRequest = nil
     }
 
-    public func pair(with deviceId: String) {
+    func pair(with deviceId: String) {
         let service = TetherService.shared
         if let info = service.connectedDevices[deviceId]?.peerDeviceInfo
             ?? service.discoveredDevices.first(where: { $0.deviceId == deviceId }) {
@@ -384,23 +384,23 @@ public final class TetherAppModel {
         }
     }
 
-    public func unpair(deviceId: String) {
+    func unpair(deviceId: String) {
         TetherService.shared.unpair(deviceId: deviceId)
     }
 
-    public func refreshDiscovery(thorough: Bool = true) {
+    func refreshDiscovery(thorough: Bool = true) {
         guard !isMockMode else { return }
         TetherService.shared.refreshDiscovery(thorough: thorough)
         checkNotificationStatus()
     }
 
     /// Adds a device by IPv4 address or host name; false if the name doesn't resolve.
-    public func addManualPeer(address: String) async -> Bool {
+    func addManualPeer(address: String) async -> Bool {
         guard !isMockMode else { return true }
         return await TetherService.shared.addManualPeer(address: address)
     }
 
-    public func checkNotificationStatus() {
+    func checkNotificationStatus() {
         guard !isMockMode else { return }
         UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
             DispatchQueue.main.async {
@@ -409,7 +409,7 @@ public final class TetherAppModel {
         }
     }
 
-    public func openNotificationSettings() {
+    func openNotificationSettings() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
             NSWorkspace.shared.open(url)
         }
@@ -420,7 +420,7 @@ public final class TetherAppModel {
 // MARK: - Mocks for Previews
 
 extension TetherAppModel {
-    public static func mock() -> TetherAppModel {
+    static func mock() -> TetherAppModel {
         let model = TetherAppModel(isMock: true)
         model.isRunning = true
         model.connectedDevices = [.mockConnectedPhone(), .mockConnectedTablet()]
@@ -430,13 +430,13 @@ extension TetherAppModel {
         return model
     }
 
-    public static func mockEmpty() -> TetherAppModel {
+    static func mockEmpty() -> TetherAppModel {
         let model = TetherAppModel(isMock: true)
         model.isRunning = true
         return model
     }
 
-    public static func mockPairRequest() -> TetherAppModel {
+    static func mockPairRequest() -> TetherAppModel {
         let model = TetherAppModel.mock()
         model.incomingPairRequest = PairRequestViewModel(
             id: "pair_req_dev",

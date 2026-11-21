@@ -6,14 +6,14 @@
 import SwiftUI
 import UserNotifications
 
-public struct SettingsView: View {
+struct SettingsView: View {
     @Bindable var viewModel: SettingsViewModel
 
-    public init(viewModel: SettingsViewModel) {
+    init(viewModel: SettingsViewModel) {
         self.viewModel = viewModel
     }
 
-    public var body: some View {
+    var body: some View {
         TabView {
             Tab("General", systemImage: "gear") {
                 GeneralSettings(viewModel: viewModel)

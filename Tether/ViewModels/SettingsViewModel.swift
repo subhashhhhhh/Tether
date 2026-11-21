@@ -14,18 +14,18 @@ import ApplicationServices
 
 @Observable
 @MainActor
-public final class SettingsViewModel {
-    public static let shared = SettingsViewModel()
+final class SettingsViewModel {
+    static let shared = SettingsViewModel()
 
-    public var deviceName: String = DeviceIdentity.shared.deviceName
-    public var deviceId: String = DeviceIdentity.shared.deviceId
-    public var certificateFingerprint: String = DeviceIdentity.shared.certificateFingerprint
-    public var pairedDevices: [PairedDevice] = []
-    public var launchAtLogin: Bool = false
-    public var notificationAuthStatus: UNAuthorizationStatus = .notDetermined
-    public var isAccessibilityTrusted: Bool = false
-    public var tailscaleStatus: TailscaleStatus = .notInstalled
-    public var isTailscaleDiscoveryEnabled: Bool = TailscaleDiscovery.isEnabled {
+    var deviceName: String = DeviceIdentity.shared.deviceName
+    var deviceId: String = DeviceIdentity.shared.deviceId
+    var certificateFingerprint: String = DeviceIdentity.shared.certificateFingerprint
+    var pairedDevices: [PairedDevice] = []
+    var launchAtLogin: Bool = false
+    var notificationAuthStatus: UNAuthorizationStatus = .notDetermined
+    var isAccessibilityTrusted: Bool = false
+    var tailscaleStatus: TailscaleStatus = .notInstalled
+    var isTailscaleDiscoveryEnabled: Bool = TailscaleDiscovery.isEnabled {
         didSet {
             guard !isMockMode, oldValue != isTailscaleDiscoveryEnabled else { return }
             UserDefaults.standard.set(isTailscaleDiscoveryEnabled, forKey: TailscaleDiscovery.enabledKey)
@@ -36,7 +36,7 @@ public final class SettingsViewModel {
 
     private var isMockMode: Bool = false
 
-    public init(isMock: Bool = false) {
+    init(isMock: Bool = false) {
         self.isMockMode = isMock
         if !isMock {
             refresh()
@@ -47,7 +47,7 @@ public final class SettingsViewModel {
         }
     }
 
-    public func refresh() {
+    func refresh() {
         guard !isMockMode else { return }
         self.deviceName = DeviceIdentity.shared.deviceName
         self.deviceId = DeviceIdentity.shared.deviceId
@@ -58,7 +58,7 @@ public final class SettingsViewModel {
         self.refreshNotificationStatus()
     }
 
-    public func saveDeviceName(_ newName: String) {
+    func saveDeviceName(_ newName: String) {
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         self.deviceName = trimmed
@@ -67,19 +67,19 @@ public final class SettingsViewModel {
         TetherService.shared.refreshAdvertisement()
     }
 
-    public func unpair(deviceId: String) {
+    func unpair(deviceId: String) {
         TetherService.shared.unpair(deviceId: deviceId)
         reloadPairedDevices()
     }
 
-    public func setSync(deviceId: String, clipboard: Bool, notifications: Bool) {
+    func setSync(deviceId: String, clipboard: Bool, notifications: Bool) {
         guard !isMockMode else { return }
         TrustStore.shared.updateSettings(deviceId: deviceId, clipboard: clipboard, notifications: notifications)
         reloadPairedDevices()
     }
 
     /// Port the TCP listener actually bound, which peers dial back on.
-    public var listeningPort: Int { DeviceIdentity.shared.advertisedTCPPort }
+    var listeningPort: Int { DeviceIdentity.shared.advertisedTCPPort }
 
     private func reloadPairedDevices() {
         self.pairedDevices = TrustStore.shared.pairedDevices.values
@@ -91,7 +91,7 @@ public final class SettingsViewModel {
         self.launchAtLogin = (service.status == .enabled)
     }
 
-    public func setLaunchAtLogin(_ enabled: Bool) {
+    func setLaunchAtLogin(_ enabled: Bool) {
         let service = SMAppService.mainApp
         do {
             if enabled {
@@ -110,7 +110,7 @@ public final class SettingsViewModel {
         }
     }
 
-    public func refreshNotificationStatus() {
+    func refreshNotificationStatus() {
         UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
             DispatchQueue.main.async {
                 self?.notificationAuthStatus = settings.authorizationStatus
@@ -118,7 +118,7 @@ public final class SettingsViewModel {
         }
     }
 
-    public func requestNotificationPermission() {
+    func requestNotificationPermission() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { [weak self] granted, _ in
             DispatchQueue.main.async {
                 self?.refreshNotificationStatus()
@@ -126,13 +126,13 @@ public final class SettingsViewModel {
         }
     }
 
-    public func openNotificationSettings() {
+    func openNotificationSettings() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
             NSWorkspace.shared.open(url)
         }
     }
 
-    public func promptAccessibility() {
+    func promptAccessibility() {
         let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(options)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
@@ -140,7 +140,7 @@ public final class SettingsViewModel {
         }
     }
 
-    public func openAccessibilitySettings() {
+    func openAccessibilitySettings() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
             NSWorkspace.shared.open(url)
         }
@@ -149,7 +149,7 @@ public final class SettingsViewModel {
     // MARK: - Mocks for Previews
 
     #if DEBUG
-    public static func mock() -> SettingsViewModel {
+    static func mock() -> SettingsViewModel {
         let vm = SettingsViewModel(isMock: true)
         vm.deviceName = "MacBook Air"
         vm.deviceId = "b0ffaae46842413d997e1da63fcd6f93"
@@ -172,7 +172,7 @@ public final class SettingsViewModel {
         return vm
     }
 
-    public static func mockDenied() -> SettingsViewModel {
+    static func mockDenied() -> SettingsViewModel {
         let vm = SettingsViewModel.mock()
         vm.notificationAuthStatus = .denied
         vm.isAccessibilityTrusted = false

@@ -11,7 +11,7 @@
 import SwiftUI
 import AppKit
 
-public struct MenuBarView: View {
+struct MenuBarView: View {
     @Bindable var appModel: TetherAppModel
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
@@ -20,11 +20,11 @@ public struct MenuBarView: View {
     /// What Send Clipboard would send, read when the popover opens.
     @State private var clipboardPreview: String?
 
-    public init(appModel: TetherAppModel) {
+    init(appModel: TetherAppModel) {
         self.appModel = appModel
     }
 
-    public var body: some View {
+    var body: some View {
         // Spacing groups the sections. The one divider sets the app's own rows
         // apart, as a menu does, and sits as close to its neighbours as a
         // menu's separator: the rows either side have padding of their own.
@@ -113,6 +113,13 @@ public struct MenuBarView: View {
     private func readClipboard() {
         let preview = NSPasteboard.general.string(forType: .string).map { $0.firstLine(limit: 120) }
         if preview != clipboardPreview { clipboardPreview = preview }
+    }
+
+    /// Send Clipboard says what it would send, so there's no guessing which
+    /// way it goes.
+    private func help(for action: DeviceAction, on device: DeviceViewModel) -> String {
+        guard action == .sendClipboard else { return action.help(for: device) }
+        return clipboardPreview.flatMap { $0.isEmpty ? nil : "Send “\($0)” to \(device.name)" } ?? "Nothing copied on this Mac"
     }
 
     // MARK: - Sections
@@ -219,30 +226,16 @@ public struct MenuBarView: View {
     /// What you do to the phone: one row of small tiles, each with its name.
     private func actions(_ device: DeviceViewModel) -> some View {
         HStack(spacing: 8) {
-            ActionTile(title: "Ring Phone", systemImage: "speaker.wave.3") {
-                closePopover()
-                device.findMyPhone()
-            }
-            .help("Ring \(device.name) at full volume")
-            if device.canLock {
-                ActionTile(title: "Lock", systemImage: "lock") {
-                    closePopover()
-                    device.lockDevice()
+            ForEach([DeviceAction.findPhone, .lock, .sendFiles, .sendClipboard], id: \.self) { action in
+                if action.isAvailable(on: device) {
+                    ActionTile(title: action.title, systemImage: action.systemImage) {
+                        closePopover()
+                        action.perform(on: device)
+                    }
+                    .help(help(for: action, on: device))
+                    .disabled(action == .sendClipboard && (clipboardPreview?.isEmpty ?? true))
                 }
             }
-            ActionTile(title: "Send Files", systemImage: "arrow.up.doc") {
-                closePopover()
-                NSApp.activate()
-                device.sendFiles(FilePicker.chooseFiles(sendingTo: device.name))
-            }
-            .help("Choose files to send to \(device.name)")
-            ActionTile(title: "Send Clipboard", systemImage: "doc.on.clipboard") {
-                closePopover()
-                device.sendClipboard()
-            }
-            // Says what it would send, so there's no guessing which way it goes.
-            .help(clipboardPreview.flatMap { $0.isEmpty ? nil : "Send “\($0)” to \(device.name)" } ?? "Nothing copied on this Mac")
-            .disabled(clipboardPreview?.isEmpty ?? true)
         }
         .padding(.horizontal, 6)
     }

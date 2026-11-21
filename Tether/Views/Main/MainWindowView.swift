@@ -59,68 +59,6 @@ enum SidebarItem: Hashable {
     }
 }
 
-/// Tether lives in the menu bar, but a window with no Dock icon and no
-/// menu bar is hard to get back to, and leaves nowhere for Settings. While
-/// a window is open the app is a regular one; it goes back to the menu bar
-/// alone when the last one closes.
-@MainActor
-enum DockPresence {
-    /// Tests host their views in the app; they shouldn't take the Dock or focus.
-    private static let isTesting = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
-
-    static func windowOpened() {
-        guard !isTesting else { return }
-        if NSApp.activationPolicy() != .regular { NSApp.setActivationPolicy(.regular) }
-        NSApp.activate()
-        // The Dock creates the icon a moment after the switch, and a badge
-        // set before then is lost; it's set again once the app is active.
-        observeActivation()
-        // The Dock takes a second or two to have the icon ready, and ignores
-        // the same label set again, so the badge is cleared and set a few
-        // times while the icon appears.
-        for delay in [0.5, 1.5, 3.0] {
-            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { applyBadge(redraw: true) }
-        }
-    }
-
-    private static var activationObserver: NSObjectProtocol?
-
-    private static func observeActivation() {
-        guard activationObserver == nil else { return }
-        activationObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
-        ) { _ in
-            MainActor.assumeIsolated { applyBadge(redraw: true) }
-        }
-    }
-
-    static func windowClosed() {
-        guard !isTesting else { return }
-        // After the closing window has gone.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            let hasWindow = NSApp.windows.contains { $0.isVisible && $0.canBecomeMain && !($0 is NSPanel) }
-            if !hasWindow { NSApp.setActivationPolicy(.accessory) }
-        }
-    }
-
-    /// The count on the Dock icon, which is there while the window is open.
-    private static var badgeCount = 0
-
-    static func setBadge(_ count: Int) {
-        guard !isTesting else { return }
-        badgeCount = count
-        applyBadge()
-    }
-
-    private static func applyBadge(redraw: Bool = false) {
-        guard NSApp.activationPolicy() == .regular else { return }
-        if redraw { NSApp.dockTile.badgeLabel = nil }
-        NSApp.dockTile.badgeLabel = badgeCount > 0 ? String(badgeCount) : nil
-        NSApp.dockTile.display()
-        TetherLog("[Dock] Badge \(badgeCount)")
-    }
-}
-
 extension EnvironmentValues {
     /// True while the window's sidebar is hidden, when its toolbar buttons
     /// sit over the detail area's top-leading corner.
@@ -133,12 +71,12 @@ struct SectionRequest: Equatable {
     let section: DeviceSection
 }
 
-public struct MainWindowView: View {
+struct MainWindowView: View {
     @Bindable var appModel: TetherAppModel
     @State private var selection: SidebarItem?
     @State private var columnVisibility = NavigationSplitViewVisibility.automatic
 
-    public init(appModel: TetherAppModel) {
+    init(appModel: TetherAppModel) {
         self.init(appModel: appModel, initialSection: .overview)
     }
 
@@ -154,7 +92,7 @@ public struct MainWindowView: View {
         }
     }
 
-    public var body: some View {
+    var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             DeviceSidebar(appModel: appModel, selection: $selection) {
                 appModel.isShowingConnectByIP = true
@@ -348,9 +286,8 @@ struct DeviceSidebar: View {
     @ViewBuilder
     private func contextMenu(for device: DeviceViewModel) -> some View {
         if device.isConnected {
-            Button("Find Phone", systemImage: "speaker.wave.3") { device.findMyPhone() }
-            Button("Send Files…", systemImage: "square.and.arrow.up") {
-                device.sendFiles(FilePicker.chooseFiles(sendingTo: device.name))
+            ForEach([DeviceAction.findPhone, .sendFiles], id: \.self) { action in
+                Button(action.menuTitle(for: device), systemImage: action.systemImage) { action.perform(on: device) }
             }
             Divider()
         }
@@ -408,64 +345,3 @@ private struct DeviceLabel: View {
 
 // MARK: - Menu commands
 
-struct TetherCommands: Commands {
-    @Environment(\.openWindow) private var openWindow
-    let appModel: TetherAppModel
-
-    var body: some Commands {
-        CommandGroup(replacing: .appInfo) {
-            Button("About Tether") { TetherCredits.showAboutPanel() }
-            Button("Check for Updates…") { UpdateController.shared.checkForUpdates() }
-        }
-
-        // In the Tether menu, not a File menu: Tether has no documents.
-        CommandGroup(after: .appSettings) {
-            Button("Connect by Address…") {
-                openWindow(id: "main")
-                appModel.isShowingConnectByIP = true
-            }
-            .keyboardShortcut("k")
-
-            Button("Look for Devices") { appModel.refreshDiscovery() }
-                .keyboardShortcut("r")
-        }
-
-        // No File or View menu. Emptying their groups removes them.
-        CommandGroup(replacing: .newItem) {}
-        CommandGroup(replacing: .saveItem) {}
-        CommandGroup(replacing: .importExport) {}
-        CommandGroup(replacing: .printItem) {}
-        CommandGroup(replacing: .sidebar) {}
-        CommandGroup(replacing: .toolbar) {}
-
-        CommandMenu("Device") {
-            let device = appModel.primaryDevice
-            // Named, so it's clear which phone a command reaches when the
-            // selected one is offline and another is used instead.
-            let suffix = device.map { " to \($0.name)" } ?? ""
-            Button("Send Files\(suffix)…") {
-                if let device { device.sendFiles(FilePicker.chooseFiles(sendingTo: device.name)) }
-            }
-            .keyboardShortcut("o")
-            .disabled(device == nil)
-
-            Button("Send Clipboard\(suffix)") { device?.sendClipboard() }
-                .keyboardShortcut("c", modifiers: [.command, .shift])
-                .disabled(device == nil)
-
-            Divider()
-
-            Button(device.map { "Ring \($0.name)" } ?? "Find Phone") { device?.findMyPhone() }
-                .keyboardShortcut("f", modifiers: [.command, .shift])
-                .disabled(device == nil)
-
-            if device?.canLock == true {
-                Button(device.map { "Lock \($0.name)" } ?? "Lock") { device?.lockDevice() }
-                    .keyboardShortcut("l", modifiers: [.command, .shift])
-            }
-
-            Button(device.map { "Ping \($0.name)" } ?? "Ping") { device?.ping() }
-                .disabled(device == nil)
-        }
-    }
-}

@@ -127,13 +127,13 @@ struct OverviewPane: View {
 
             GlassGroup(spacing: 10) {
                 HStack(spacing: 10) {
-                    Button(isRinging ? "Ringing…" : "Find Phone", systemImage: "speaker.wave.3") {
+                    Button(isRinging ? "Ringing…" : DeviceAction.findPhone.title, systemImage: DeviceAction.findPhone.systemImage) {
                         device.findMyPhone()
                         isRinging = true
                     }
                     .symbolEffect(.variableColor.iterative, isActive: isRinging)
                     .disabled(isRinging)
-                    .help(isRinging ? "\(device.name) rings until someone taps it" : "Ring \(device.name) at full volume")
+                    .help(isRinging ? "\(device.name) rings until someone taps it" : DeviceAction.findPhone.help(for: device))
                     .task(id: isRinging) {
                         guard isRinging else { return }
                         try? await Task.sleep(for: .seconds(10))
@@ -141,8 +141,8 @@ struct OverviewPane: View {
                     }
                     ClipboardMenu(device: device)
                     if device.canLock {
-                        Button("Lock", systemImage: "lock") { device.lockDevice() }
-                            .help("Lock \(device.name)")
+                        Button(DeviceAction.lock.title, systemImage: DeviceAction.lock.systemImage) { DeviceAction.lock.perform(on: device) }
+                            .help(DeviceAction.lock.help(for: device))
                     }
                 }
                 .glassButton()
@@ -177,8 +177,8 @@ private struct ClipboardMenu: View {
     var body: some View {
         // Two real glass buttons rather than one split menu button: a split
         // menu draws its own bezel and ignores the glass button style.
-        Button("Send Clipboard", systemImage: "doc.on.clipboard") {
-            device.sendClipboard()
+        Button(DeviceAction.sendClipboard.title, systemImage: DeviceAction.sendClipboard.systemImage) {
+            DeviceAction.sendClipboard.perform(on: device)
         }
         .help("Send this Mac's clipboard to \(device.name)")
 
