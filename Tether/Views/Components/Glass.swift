@@ -173,8 +173,9 @@ struct GroupCardBackground: View {
 }
 
 /// A bar floating over a scroll view. It has no background at rest: what
-/// scrolls behind shows through untouched. While the pointer is over it,
-/// what's behind blurs, fading out at the bar's inner edge so there is no line.
+/// scrolls behind shows through untouched. While the pointer is over it, it
+/// takes the bar material with a hairline at its inner edge, as Messages'
+/// header does: a clean band, not a fade.
 struct HoverBlurBar<Content: View>: View {
     let edge: VerticalEdge
     @ViewBuilder var content: Content
@@ -185,14 +186,8 @@ struct HoverBlurBar<Content: View>: View {
             .frame(maxWidth: .infinity)
             .background {
                 Rectangle()
-                    .fill(.ultraThinMaterial)
-                    .mask {
-                        LinearGradient(
-                            stops: [.init(color: .black, location: 0), .init(color: .black, location: 0.7), .init(color: .clear, location: 1)],
-                            startPoint: edge == .top ? .top : .bottom,
-                            endPoint: edge == .top ? .bottom : .top
-                        )
-                    }
+                    .fill(.bar)
+                    .overlay(alignment: edge == .top ? .bottom : .top) { Divider() }
                     .opacity(isHovering ? 1 : 0)
                     .allowsHitTesting(false)
             }

@@ -57,7 +57,10 @@ struct NotificationsPane: View {
                             .frame(maxWidth: .infinity)
                             .listRowInsets(EdgeInsets())
                             .listRowSeparator(.hidden)
-                            .listRowBackground(GroupCardBackground(isFirst: index == 0, isLast: index == group.items.count - 1))
+                            // The card is part of the row, not the row's
+                            // background, so a swipe moves the whole card.
+                            .background(GroupCardBackground(isFirst: index == 0, isLast: index == group.items.count - 1))
+                            .listRowBackground(Color.clear)
                             .overlay(alignment: .top) {
                                 if index > 0 {
                                     Divider()

@@ -21,6 +21,9 @@ struct MessagesPane: View {
     /// The list has focus when the page opens, so its selection is the
     /// accent colour rather than the grey of a list you've left.
     @FocusState private var isListFocused: Bool
+    /// True while the empty page is waiting on the phone's conversations.
+    @State private var isSyncing = true
+    @State private var syncAttempt = 0
     @Environment(\.isSidebarCollapsed) private var isSidebarCollapsed
 
     private var filteredThreads: [SMSConversation] {
@@ -39,18 +42,43 @@ struct MessagesPane: View {
 
     var body: some View {
         if device.smsThreads.isEmpty {
+            // Says that it's asking the phone, rather than claiming there are
+            // no conversations while the first sync is still on its way.
             ContentUnavailableView {
-                Label("No Conversations", systemImage: "message")
+                if isSyncing {
+                    Label {
+                        Text("Syncing Messages…")
+                    } icon: {
+                        ProgressView()
+                            .controlSize(.large)
+                    }
+                } else {
+                    Label("No Conversations", systemImage: "message")
+                }
             } description: {
-                Text("Text messages sync from \(device.name). Make sure KDE Connect has SMS permission on the phone.")
+                Text(isSyncing
+                     ? "Getting conversations from \(device.name)."
+                     : "Nothing came back from \(device.name). Make sure KDE Connect has SMS permission on the phone.")
             } actions: {
-                Button("Sync Messages") { device.refreshMessages() }
+                if !isSyncing {
+                    Button("Sync Messages") { syncAttempt += 1 }
+                }
             }
-            .task { device.refreshMessages() }
+            .task(id: syncAttempt) {
+                isSyncing = true
+                device.refreshMessages()
+                // The phone doesn't say when it has nothing to send; after a
+                // while with no conversations, stop waiting and say so.
+                try? await Task.sleep(for: .seconds(12))
+                if !Task.isCancelled { isSyncing = false }
+            }
         } else {
             HSplitView {
                 threadList
-                    .frame(minWidth: 240, idealWidth: 290, maxWidth: 340)
+                    // HSplitView opens a pane at its minimum or maximum and
+                    // ignores the ideal; with nothing pulling the other way,
+                    // the list opens at its widest.
+                    .frame(minWidth: 240, maxWidth: 340)
                 Group {
                     if isComposing && selectedThreadId == Self.draftTag {
                         NewConversationView(device: device, onSent: { number in
@@ -65,8 +93,6 @@ struct MessagesPane: View {
                     }
                 }
                 .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
-                // The conversation takes the room; the list keeps its width.
-                .layoutPriority(1)
             }
             .onAppear {
                 if selectedThreadId == nil { selectedThreadId = device.smsThreads.first?.id }
@@ -248,7 +274,7 @@ private struct ConversationView: View {
 
     var body: some View {
         // The header and the message field float over the conversation with
-        // nothing behind them, and blur what's behind only under the pointer.
+        // nothing behind them.
         MessageList(thread: thread, device: device, topRoom: 86, bottomRoom: composerHeight)
             .overlay(alignment: .top) {
                 HoverBlurBar(edge: .top) {
@@ -281,11 +307,11 @@ private struct ConversationView: View {
                 }
             }
             .overlay(alignment: .bottom) {
-                HoverBlurBar(edge: .bottom) {
-                    MessageComposer(device: device, thread: thread, isFocused: $isComposerFocused) { text, sim in
-                        guard !thread.addresses.isEmpty else { return }
-                        device.sendSMS(to: thread.addresses, message: text, threadId: thread.threadId, subId: sim)
-                    }
+                // Nothing behind the message field, hovered or not: it floats,
+                // and only the header takes a band under the pointer.
+                MessageComposer(device: device, thread: thread, isFocused: $isComposerFocused) { text, sim in
+                    guard !thread.addresses.isEmpty else { return }
+                    device.sendSMS(to: thread.addresses, message: text, threadId: thread.threadId, subId: sim)
                 }
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { composerHeight = $0 }
             }

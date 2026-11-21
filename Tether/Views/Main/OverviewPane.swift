@@ -43,8 +43,11 @@ struct OverviewPane: View {
                         .frame(maxWidth: .infinity)
                         .listRowInsets(EdgeInsets())
                         .listRowSeparator(.hidden)
-                        .listRowBackground(GroupCardBackground(isFirst: index == 0, isLast: index == latest.count - 1,
-                                                               maxWidth: Self.column, margin: Self.margin))
+                        // Part of the row, not its background, so a swipe
+                        // moves the whole card.
+                        .background(GroupCardBackground(isFirst: index == 0, isLast: index == latest.count - 1,
+                                                        maxWidth: Self.column, margin: Self.margin))
+                        .listRowBackground(Color.clear)
                         .overlay(alignment: .top) {
                             if index > 0 {
                                 Divider()

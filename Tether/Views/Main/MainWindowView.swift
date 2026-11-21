@@ -331,7 +331,9 @@ private struct DeviceLabel: View {
 
     var body: some View {
         Label {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
+            // Centred, not on a shared baseline: the smaller text would sit
+            // below the middle of the row.
+            HStack(alignment: .center, spacing: 6) {
                 Text(device.name)
                     .lineLimit(1)
                     .layoutPriority(1)
