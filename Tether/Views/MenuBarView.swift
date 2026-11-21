@@ -26,8 +26,10 @@ public struct MenuBarView: View {
 
     public var body: some View {
         // Spacing groups the sections. The one divider sets the app's own rows
-        // apart, as a menu does.
-        VStack(alignment: .leading, spacing: 12) {
+        // apart, as a menu does, and sits as close to its neighbours as a
+        // menu's separator: the rows either side have padding of their own.
+        VStack(alignment: .leading, spacing: 4) {
+          VStack(alignment: .leading, spacing: 12) {
             if let request = appModel.incomingPairRequest {
                 pairRequestCard(request)
                     .staggeredEntrance(0)
@@ -53,6 +55,7 @@ public struct MenuBarView: View {
                 nearbyCard
                     .staggeredEntrance(3)
             }
+          }
 
             Divider()
 

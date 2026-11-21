@@ -69,23 +69,31 @@ struct DeviceDetailView: View {
     }
 }
 
+/// Shown while files are dragged over a connected device's page: the page
+/// blurs from edge to edge and says, in the middle, what dropping will do.
 private struct DropOverlay: View {
     let deviceName: String
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .strokeBorder(.tint, lineWidth: 3)
-            .background(.tint.opacity(0.06), in: .rect(cornerRadius: 10, style: .continuous))
-            .overlay(alignment: .bottom) {
+        ZStack {
+            // The blur runs to every edge, under the toolbar and the sidebar.
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .ignoresSafeArea()
+
+            // The prompt stays inside the safe area, so it's centred in the
+            // part of the pane you can see, wherever the sidebar is.
+            VStack(spacing: 14) {
+                Image(systemName: "arrow.up.doc.fill")
+                    .font(.system(size: 52, weight: .light))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(.tint)
+                    .accessibilityHidden(true)
                 Text("Drop to send to \(deviceName)")
-                    .font(.headline)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 7)
-                    .background(.bar, in: .capsule)
-                    .padding(.bottom, 24)
+                    .font(.title2.weight(.semibold))
             }
-            .padding(6)
-            .allowsHitTesting(false)
+        }
+        .allowsHitTesting(false)
     }
 }
 

@@ -335,6 +335,9 @@ private struct DeviceLabel: View {
                 Text(device.name)
                     .lineLimit(1)
                     .layoutPriority(1)
+                // Pushed to the row's trailing edge, where a sidebar keeps
+                // its counts, so names line up and status reads as a column.
+                Spacer(minLength: 4)
                 Text(detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
