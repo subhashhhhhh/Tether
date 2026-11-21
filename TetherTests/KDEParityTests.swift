@@ -225,3 +225,18 @@ struct MediaPlayerChoiceTests {
         #expect(MediaControlPlugin.playerToShow(chosen: nil, shown: nil, states: [:], order: []) == nil)
     }
 }
+
+struct ReceivedFileTests {
+    @Test func marksReceivedFilesForGatekeeper() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("tether-quarantine-\(UUID().uuidString).txt")
+        try Data("hi".utf8).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        SharePlugin.quarantine(url, from: "Pixel 9")
+        let length = getxattr(url.path, "com.apple.quarantine", nil, 0, 0, 0)
+        #expect(length > 0)
+    }
+
+    @Test func opensOnlyWebAndMailLinks() {
+        #expect(SharePlugin.openableSchemes == ["http", "https", "mailto"])
+    }
+}

@@ -17,6 +17,16 @@ nonisolated final class InputSynthesizer: @unchecked Sendable {
 
     private let lock = NSLock()
     private var isLeftButtonPressed = false
+    /// Where Tether last put the pointer, and when. Reading the position
+    /// back straight after moving it can lag, which skewed movement; it's
+    /// read from the system again only after a pause, when the real mouse
+    /// may have moved it.
+    private var pointer: CGPoint?
+    private var pointerMovedAt = Date.distantPast
+    /// When the last scroll arrived. Lifting two fingers after a scroll
+    /// sends a tap, which mustn't click.
+    private var lastScrollAt = Date.distantPast
+    private let scroller = MomentumScroller()
 
     /// Upstream SpecialKeysMap table verbatim (macosremoteinput.mm:16-50)
     private static let specialKeysMap: [CGKeyCode] = [
@@ -97,6 +107,13 @@ nonisolated final class InputSynthesizer: @unchecked Sendable {
             isSingleHold || isSingleRelease || isScroll || !key.isEmpty || validSpecialKey {
 
             let currentPoint = currentMousePosition()
+            let isClick = isSingleClick || isDoubleClick || isMiddleClick || isRightClick
+            if isClick || isSingleHold {
+                scroller.stop()
+                if Date().timeIntervalSince(lock.withLock { lastScrollAt }) < Self.tapAfterScrollWindow {
+                    return true
+                }
+            }
 
             if isSingleClick {
                 postMouseEvent(type: .leftMouseDown, point: currentPoint, button: .left)
@@ -130,10 +147,10 @@ nonisolated final class InputSynthesizer: @unchecked Sendable {
                 postMouseEvent(type: .leftMouseUp, point: currentPoint, button: .left)
                 lock.withLock { self.isLeftButtonPressed = false }
             } else if isScroll {
-                // dy = vertical, -dx = horizontal scroll
-                if let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: Self.wheelDelta(dy), wheel2: -Self.wheelDelta(dx), wheel3: 0) {
-                    event.post(tap: .cghidEventTap)
-                }
+                // dy = vertical, -dx = horizontal scroll, sent as a trackpad
+                // scroll so it ends with an inertial glide.
+                lock.withLock { lastScrollAt = Date() }
+                scroller.scroll(vertical: dy, horizontal: -dx)
             } else if !key.isEmpty || validSpecialKey {
                 let ctrl = packet.bool(for: "ctrl") ?? false
                 let alt = packet.bool(for: "alt") ?? false
@@ -182,22 +199,49 @@ nonisolated final class InputSynthesizer: @unchecked Sendable {
 
     // MARK: - Event Helpers
 
+    /// A tap this soon after a scroll is the second finger lifting.
+    private static let tapAfterScrollWindow: TimeInterval = 0.3
+
     private func currentMousePosition() -> CGPoint {
-        // CGEvent(source: nil)?.location gives global screen coordinates where (0,0) is top-left
-        if let event = CGEvent(source: nil) {
-            return event.location
+        let tracked = lock.withLock { () -> CGPoint? in
+            Date().timeIntervalSince(pointerMovedAt) < 0.5 ? pointer : nil
         }
-        return .zero
+        if let tracked { return tracked }
+        // Global coordinates, (0,0) at the top left of the main display.
+        return CGEvent(source: nil)?.location ?? .zero
     }
 
+    /// Moves the pointer as a mouse would: a moved (or dragged) event with
+    /// its deltas, not a jump. macOS then updates the cursor's shape at a
+    /// window's edge, shows a hidden Dock, and apps see the movement.
     private func setMousePosition(_ point: CGPoint) {
-        let isDragging = lock.withLock { self.isLeftButtonPressed }
-        if isDragging {
-            // When button is held, posting leftMouseDragged is mandatory for OS selection and window dragging
-            postMouseEvent(type: .leftMouseDragged, point: point, button: .left)
-        } else {
-            CGWarpMouseCursorPosition(point)
+        let from = currentMousePosition()
+        let to = Self.clampedToDisplays(point)
+        let isDragging = lock.withLock { () -> Bool in
+            pointer = to
+            pointerMovedAt = Date()
+            return isLeftButtonPressed
         }
+        let type: CGEventType = isDragging ? .leftMouseDragged : .mouseMoved
+        guard let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: to, mouseButton: .left) else { return }
+        event.setDoubleValueField(.mouseEventDeltaX, value: to.x - from.x)
+        event.setDoubleValueField(.mouseEventDeltaY, value: to.y - from.y)
+        event.post(tap: .cghidEventTap)
+    }
+
+    /// Keeps the pointer on a screen, as a real mouse stays.
+    private static func clampedToDisplays(_ point: CGPoint) -> CGPoint {
+        var count: UInt32 = 0
+        CGGetActiveDisplayList(0, nil, &count)
+        var displays = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        CGGetActiveDisplayList(count, &displays, &count)
+        let bounds = displays.map(CGDisplayBounds)
+        if bounds.contains(where: { $0.contains(point) }) { return point }
+        // Off every screen: onto the nearest point of the nearest one.
+        let nearest = bounds.map { rect in
+            CGPoint(x: min(max(point.x, rect.minX), rect.maxX - 1), y: min(max(point.y, rect.minY), rect.maxY - 1))
+        }.min { hypot($0.x - point.x, $0.y - point.y) < hypot($1.x - point.x, $1.y - point.y) }
+        return nearest ?? point
     }
 
     private func postMouseEvent(type: CGEventType, point: CGPoint, button: CGMouseButton) {
@@ -243,5 +287,107 @@ nonisolated final class InputSynthesizer: @unchecked Sendable {
     nonisolated static func wheelDelta(_ value: Double) -> Int32 {
         guard value.isFinite else { return 0 }
         return Int32(max(-10_000, min(10_000, value.rounded())))
+    }
+}
+
+/// Scrolls as a trackpad does: a gesture that begins, changes and ends,
+/// then a glide that slows to a stop, so apps scroll with inertia. The
+/// phone sends only deltas while fingers move.
+private nonisolated final class MomentumScroller: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "com.subhashh.tether.scroll", qos: .userInteractive)
+    private var isScrolling = false
+    private var velocity = CGVector.zero
+    private var lastDeltaAt = Date.distantPast
+    private var endTimer: DispatchSourceTimer?
+    private var glideTimer: DispatchSourceTimer?
+
+    /// No delta for this long means the fingers lifted.
+    private static let liftGap: TimeInterval = 0.08
+    private static let frame: TimeInterval = 1.0 / 60
+    private static let friction: CGFloat = 0.94
+
+    func scroll(vertical: Double, horizontal: Double) {
+        queue.async {
+            self.stopGlide()
+            let now = Date()
+            let interval = max(now.timeIntervalSince(self.lastDeltaAt), Self.frame)
+            self.lastDeltaAt = now
+            let delta = CGVector(dx: horizontal, dy: vertical)
+            // Per-frame speed, smoothed over the last few deltas.
+            let perFrame = CGVector(dx: delta.dx * Self.frame / interval, dy: delta.dy * Self.frame / interval)
+            self.velocity = self.isScrolling
+                ? CGVector(dx: self.velocity.dx * 0.5 + perFrame.dx * 0.5, dy: self.velocity.dy * 0.5 + perFrame.dy * 0.5)
+                : perFrame
+            Self.post(delta, phase: self.isScrolling ? .changed : .began)
+            self.isScrolling = true
+            self.scheduleEnd()
+        }
+    }
+
+    /// A click or press ends any glide, as touching a trackpad does.
+    func stop() {
+        queue.async {
+            self.stopGlide()
+            self.endTimer?.cancel()
+            self.endTimer = nil
+            if self.isScrolling {
+                Self.post(.zero, phase: .ended)
+                self.isScrolling = false
+            }
+        }
+    }
+
+    private func scheduleEnd() {
+        endTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + Self.liftGap)
+        timer.setEventHandler { [weak self] in self?.fingersLifted() }
+        timer.resume()
+        endTimer = timer
+    }
+
+    private func fingersLifted() {
+        endTimer = nil
+        guard isScrolling else { return }
+        isScrolling = false
+        Self.post(.zero, phase: .ended)
+        guard hypot(velocity.dx, velocity.dy) > 1 else { return }
+        Self.post(velocity, momentum: .begin)
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + Self.frame, repeating: Self.frame, leeway: .milliseconds(2))
+        timer.setEventHandler { [weak self] in self?.glide() }
+        timer.resume()
+        glideTimer = timer
+    }
+
+    private func glide() {
+        velocity = CGVector(dx: velocity.dx * Self.friction, dy: velocity.dy * Self.friction)
+        if hypot(velocity.dx, velocity.dy) < 0.5 {
+            stopGlide()
+        } else {
+            Self.post(velocity, momentum: .continuous)
+        }
+    }
+
+    private func stopGlide() {
+        guard let glideTimer else { return }
+        glideTimer.cancel()
+        self.glideTimer = nil
+        Self.post(.zero, momentum: .end)
+    }
+
+    private enum Phase: Int64 { case began = 1, changed = 2, ended = 4 }
+    private enum Momentum: Int64 { case begin = 1, continuous = 2, end = 3 }
+
+    private static func post(_ delta: CGVector, phase: Phase? = nil, momentum: Momentum? = nil) {
+        guard let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2,
+                                  wheel1: InputSynthesizer.wheelDelta(delta.dy),
+                                  wheel2: InputSynthesizer.wheelDelta(delta.dx), wheel3: 0) else { return }
+        event.setIntegerValueField(.scrollWheelEventIsContinuous, value: 1)
+        event.setDoubleValueField(.scrollWheelEventPointDeltaAxis1, value: delta.dy)
+        event.setDoubleValueField(.scrollWheelEventPointDeltaAxis2, value: delta.dx)
+        if let phase { event.setIntegerValueField(.scrollWheelEventScrollPhase, value: phase.rawValue) }
+        if let momentum { event.setIntegerValueField(.scrollWheelEventMomentumPhase, value: momentum.rawValue) }
+        event.post(tap: .cghidEventTap)
     }
 }

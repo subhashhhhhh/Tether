@@ -51,6 +51,10 @@ final class ContactsPlugin: ObservableObject, TetherPlugin, @unchecked Sendable 
         guard let deviceId = connection.peerDeviceInfo?.deviceId else { return }
         queue.async {
             self.loadFromDisk(deviceId)
+            // KDE Connect on Android answers only once it may read the phone's
+            // contacts; without that permission this goes unanswered and
+            // messages show numbers instead of names.
+            TetherLog("[Contacts] Asked \(connection.peerDeviceInfo?.deviceName ?? "the phone") for its contacts")
             connection.send(packet: NetworkPacket(type: Self.requestAllType))
         }
     }

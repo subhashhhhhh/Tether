@@ -110,6 +110,23 @@ final class SharePlugin: ObservableObject, TetherPlugin, @unchecked Sendable {
         transfers.remove(at: oldestFinished)
     }
 
+    /// Marks a received file as downloaded, as a browser does, so Gatekeeper
+    /// checks it before it's opened.
+    nonisolated static func quarantine(_ url: URL, from deviceName: String) {
+        var url = url
+        var values = URLResourceValues()
+        values.quarantineProperties = [
+            kLSQuarantineAgentNameKey as String: "Tether",
+            kLSQuarantineTypeKey as String: kLSQuarantineTypeOtherDownload as String,
+            kLSQuarantineOriginURLKey as String: "kdeconnect://\(deviceName)",
+        ]
+        do {
+            try url.setResourceValues(values)
+        } catch {
+            TetherLog("[SharePlugin] Couldn't mark \(url.lastPathComponent) as downloaded: \(error.localizedDescription)")
+        }
+    }
+
     /// Remembers a download so it can be cancelled.
     nonisolated func track(_ handle: PayloadDownloader.Handle, forPacket packetId: Int64) {
         lock.withLock { activeDownloads[packetId] = handle }
@@ -129,6 +146,7 @@ final class SharePlugin: ObservableObject, TetherPlugin, @unchecked Sendable {
 
         do {
             try FileManager.default.moveItem(at: payloadURL, to: destinationURL)
+            Self.quarantine(destinationURL, from: deviceName)
             let size = (try? FileManager.default.attributesOfItem(atPath: destinationURL.path)[.size] as? NSNumber)?.int64Value ?? 0
             TetherLog("[SharePlugin] Saved \(size) bytes to \(destinationURL.path)")
 
@@ -354,9 +372,10 @@ final class SharePlugin: ObservableObject, TetherPlugin, @unchecked Sendable {
         UNUserNotificationCenter.current().add(request)
     }
 
-    /// Links a phone may open on this Mac. Anything else (a file: URL, or
-    /// a scheme that starts an app doing something) is only shown.
-    static let openableSchemes: Set<String> = ["http", "https", "mailto", "tel", "sms", "facetime", "maps", "geo"]
+    /// Links a phone may open on this Mac, as KDE Connect desktop allows.
+    /// Anything else (a file: URL, or a scheme that starts an app doing
+    /// something) is only shown in the notification.
+    static let openableSchemes: Set<String> = ["http", "https", "mailto"]
 
     private func handleReceivedURL(_ url: URL, from deviceName: String) {
         if let scheme = url.scheme?.lowercased(), Self.openableSchemes.contains(scheme) {

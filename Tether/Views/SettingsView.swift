@@ -233,6 +233,7 @@ private struct GeneralSettings: View {
     @AppStorage(NativeNotificationFilter.deferToWhatsAppKey) private var deferToWhatsApp = true
     @AppStorage(CallMediaPauser.settingKey) private var pauseMediaDuringCalls = true
     @AppStorage(CallCard.settingKey) private var showCallCard = true
+    @AppStorage(PhoneNowPlaying.settingKey) private var showPhoneNowPlaying = true
     @AppStorage(AwayLock.settingKey) private var lockWhenPhoneLeaves = false
 
     var body: some View {
@@ -264,6 +265,10 @@ private struct GeneralSettings: View {
                 Toggle(isOn: $deferToWhatsApp) {
                     Text("Let WhatsApp for Mac show its own alerts")
                     Text("While WhatsApp is open on this Mac, Tether doesn't show a second banner for the same message. WhatsApp messages still appear in Tether's list.")
+                }
+                Toggle(isOn: $showPhoneNowPlaying) {
+                    Text("Show the phone's music in Now Playing")
+                    Text("What's playing on your phone appears in Control Center and the menu bar's Now Playing, and your Mac's media keys control it.")
                 }
                 Toggle(isOn: $showCallCard) {
                     Text("Show calls in a floating card")

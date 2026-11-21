@@ -163,6 +163,10 @@ nonisolated final class NowPlayingReader: @unchecked Sendable {
 
     static func parse(_ payload: [String: Any]) -> MacNowPlaying? {
         guard let title = payload["title"] as? String, !title.isEmpty else { return nil }
+        let app = payload["parentApplicationBundleIdentifier"] as? String ?? payload["bundleIdentifier"] as? String ?? ""
+        // Tether itself shows the phone's track in Now Playing; that isn't
+        // something this Mac is playing, and sending it back would loop.
+        guard app != Bundle.main.bundleIdentifier else { return nil }
         var state = MacNowPlaying()
         state.title = title
         state.artist = payload["artist"] as? String ?? ""

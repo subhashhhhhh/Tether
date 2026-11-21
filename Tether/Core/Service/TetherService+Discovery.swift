@@ -35,7 +35,14 @@ extension TetherService {
         Task { @MainActor in
             self.discoveredDeviceEndpoints[deviceInfo.deviceId] = (host, port)
 
-            if !self.discoveredDevices.contains(where: { $0.deviceId == deviceInfo.deviceId }) {
+            self.lastDiscovered[deviceInfo.deviceId] = Date()
+            self.pruneDiscoveredDevices()
+            if let index = self.discoveredDevices.firstIndex(where: { $0.deviceId == deviceInfo.deviceId }) {
+                // A device can be renamed; keep what it says now.
+                if self.discoveredDevices[index].deviceName != deviceInfo.deviceName {
+                    self.discoveredDevices[index] = deviceInfo
+                }
+            } else {
                 self.discoveredDevices.append(deviceInfo)
             }
 

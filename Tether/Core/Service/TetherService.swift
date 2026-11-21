@@ -16,6 +16,23 @@ final class TetherService: ObservableObject, UDPDiscoveryDelegate, MDNSDiscovery
 
     @Published var isRunning: Bool = false
     @Published var discoveredDevices: [DeviceInfo] = []
+    /// When each discovered device last announced itself.
+    var lastDiscovered: [String: Date] = [:]
+    /// An unpaired device not heard from in this long leaves the Nearby list.
+    static let discoveryLifetime: TimeInterval = 10 * 60
+
+    /// Drops unpaired devices that stopped announcing, so the list doesn't
+    /// keep every phone that ever passed through the network.
+    func pruneDiscoveredDevices() {
+        let cutoff = Date().addingTimeInterval(-Self.discoveryLifetime)
+        let stale = discoveredDevices.filter { device in
+            !trustStore.isTrusted(deviceId: device.deviceId) && (lastDiscovered[device.deviceId] ?? .distantPast) < cutoff
+        }
+        guard !stale.isEmpty else { return }
+        let ids = Set(stale.map(\.deviceId))
+        discoveredDevices.removeAll { ids.contains($0.deviceId) }
+        for id in ids { lastDiscovered[id] = nil }
+    }
     @Published var connectedDevices: [String: DeviceConnection] = [:]
     @Published var incomingPairRequest: (connection: DeviceConnection, info: DeviceInfo)?
     @Published var tailscaleStatus: TailscaleStatus = .notInstalled
@@ -98,6 +115,10 @@ final class TetherService: ObservableObject, UDPDiscoveryDelegate, MDNSDiscovery
     func start() {
         guard !isRunning else { return }
         isRunning = true
+        PhoneNowPlaying.shared.start()
+        // Nothing is downloading yet, so anything here was cut off when
+        // Tether last quit or crashed mid-transfer.
+        try? FileManager.default.removeItem(at: PayloadDownloader.incomingDirectory)
 
         tcpListener.start()
         udpDiscovery.start()
