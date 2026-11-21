@@ -81,7 +81,7 @@ public final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked S
         guard let text = NSPasteboard.general.string(forType: .string), !text.isEmpty else { return }
 
         // Suppress echo if this content originated from remote device or was already sent
-        if text == lastReceivedContent || text == lastSentContent {
+        if Self.isEcho(text, lastReceived: lastReceivedContent, lastSent: lastSentContent) {
             return
         }
 
@@ -127,15 +127,13 @@ public final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked S
         guard paired.isClipboardSyncEnabled else { return }
 
         // If it's a connect packet, verify timestamp to prevent overwriting with stale content
-        if packet.type == "kdeconnect.clipboard.connect" {
-            let packetTime = packet.int64(for: "timestamp", default: 0)
-            if packetTime > 0 && packetTime < lastLocalClipboardTimestamp {
-                TetherLog("[ClipboardPlugin] Ignoring connect packet with older timestamp: \(packetTime) vs \(lastLocalClipboardTimestamp)")
-                return
-            }
+        if packet.type == "kdeconnect.clipboard.connect",
+           Self.isStale(connectTimestamp: packet.int64(for: "timestamp", default: 0), localChange: lastLocalClipboardTimestamp) {
+            TetherLog("[ClipboardPlugin] Ignoring the phone's clip from before this Mac's last change")
+            return
         }
 
-        guard content != lastReceivedContent && content != lastSentContent else { return }
+        guard !Self.isEcho(content, lastReceived: lastReceivedContent, lastSent: lastSentContent) else { return }
 
         lastReceivedContent = content
         lastSentContent = content
@@ -172,12 +170,28 @@ public final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked S
 
     private func remember(_ content: String, from deviceId: String) {
         DispatchQueue.main.async {
-            var history = self.received[deviceId] ?? []
-            guard history.first != content else { return }
-            history.removeAll { $0 == content }
-            history.insert(content, at: 0)
-            self.received[deviceId] = Array(history.prefix(Self.receivedLimit))
+            let history = self.received[deviceId] ?? []
+            let updated = Self.adding(content, to: history)
+            if updated != history { self.received[deviceId] = updated }
         }
+    }
+
+    /// The history with this at the front, once, kept to the limit.
+    static func adding(_ content: String, to history: [String]) -> [String] {
+        var history = history
+        history.removeAll { $0 == content }
+        history.insert(content, at: 0)
+        return Array(history.prefix(receivedLimit))
+    }
+
+    /// Text that came from a device, or was just sent to one, isn't a new copy.
+    static func isEcho(_ text: String, lastReceived: String, lastSent: String) -> Bool {
+        text == lastReceived || text == lastSent
+    }
+
+    /// The phone's clip on connect is older than this Mac's last change.
+    static func isStale(connectTimestamp: Int64, localChange: Int64) -> Bool {
+        connectTimestamp > 0 && connectTimestamp < localChange
     }
 
     /// Puts something a device sent earlier back on this Mac's clipboard,

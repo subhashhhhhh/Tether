@@ -80,6 +80,10 @@ nonisolated enum SocketAddress {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.accept(serverFD, $0, &length) }
         }
         guard fd >= 0 else { return nil }
+        // A write after the peer has gone must fail, not raise SIGPIPE,
+        // which would end Tether: a phone that cancels a transfer does this.
+        var on: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
         let peer = describe(storage)
         return (fd, peer.host, peer.port)
     }

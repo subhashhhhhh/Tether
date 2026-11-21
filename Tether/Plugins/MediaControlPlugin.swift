@@ -138,12 +138,16 @@ public final class MediaControlPlugin: ObservableObject, TetherPlugin, @unchecke
     /// The player to show: the one chosen, else the one shown while it plays,
     /// else any that's playing, else the one shown, else the first.
     private func currentPlayerName(deviceId: String) -> String? {
-        let states = playerStates[deviceId] ?? [:]
-        if let chosen = chosenPlayer[deviceId], states[chosen] != nil { return chosen }
-        if let shown = nowPlaying[deviceId]?.player, states[shown]?.isPlaying == true { return shown }
-        if let playing = (players[deviceId] ?? []).first(where: { states[$0]?.isPlaying == true }) { return playing }
-        if let shown = nowPlaying[deviceId]?.player, states[shown] != nil { return shown }
-        return (players[deviceId] ?? []).first { states[$0] != nil } ?? states.keys.sorted().first
+        Self.playerToShow(chosen: chosenPlayer[deviceId], shown: nowPlaying[deviceId]?.player,
+                          states: playerStates[deviceId] ?? [:], order: players[deviceId] ?? [])
+    }
+
+    static func playerToShow(chosen: String?, shown: String?, states: [String: NowPlaying], order: [String]) -> String? {
+        if let chosen, states[chosen] != nil { return chosen }
+        if let shown, states[shown]?.isPlaying == true { return shown }
+        if let playing = order.first(where: { states[$0]?.isPlaying == true }) { return playing }
+        if let shown, states[shown] != nil { return shown }
+        return order.first { states[$0] != nil } ?? states.keys.sorted().first
     }
 
     private func showCurrentPlayer(deviceId: String, connection: DeviceConnection) {

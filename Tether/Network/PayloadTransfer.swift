@@ -178,6 +178,10 @@ enum PayloadTLS {
 
         var on: Int32 = 1
         setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, socklen_t(MemoryLayout<Int32>.size))
+        // A write after the other side has gone (it cancelled, or the TLS
+        // goodbye after a cancel) must fail rather than raise SIGPIPE, which
+        // would end Tether.
+        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
     }
 
     /// Drives the TLS handshake until it completes or the deadline passes.
@@ -246,6 +250,9 @@ public final class PayloadUploader: @unchecked Sendable {
     private var acceptedFD: Int32 = -1
     private var sslContext: SSLContext?
     private var isFinished = false
+    /// Set by cancel() once a receiver is connected: the TLS session is then
+    /// in use on the transfer's own thread, which tears it down itself.
+    private var isCancelRequested = false
 
     /// Keeps the uploader alive for the duration of a transfer. The accept and
     /// stream work happens on `queue`, so without this a caller that drops its
@@ -393,7 +400,7 @@ public final class PayloadUploader: @unchecked Sendable {
         var sent: Int64 = 0
         var lastProgress = Date()
         while sent < size {
-            if stateLock.withLock({ isFinished }) {
+            if stateLock.withLock({ isFinished || isCancelRequested }) {
                 finish(with: .failure(PayloadError.cancelled), onComplete: onComplete)
                 return
             }
@@ -409,7 +416,8 @@ public final class PayloadUploader: @unchecked Sendable {
                 deadline: Date().addingTimeInterval(PayloadPort.ioStallTimeout)
             )
             guard writeStatus == noErr else {
-                finish(with: .failure(PayloadError.socketFailure(writeStatus)), onComplete: onComplete)
+                let cancelled = stateLock.withLock { isCancelRequested }
+                finish(with: .failure(cancelled ? PayloadError.cancelled : PayloadError.socketFailure(writeStatus)), onComplete: onComplete)
                 return
             }
 
@@ -433,7 +441,20 @@ public final class PayloadUploader: @unchecked Sendable {
     }
 
     public func cancel() {
-        finish(with: .failure(PayloadError.cancelled)) { _ in }
+        // Once a receiver is connected, its TLS session belongs to the
+        // transfer's thread: freeing it here, mid-write, crashed Tether. The
+        // socket is shut instead, which ends the write, and that thread
+        // finishes. Before then, closing the listening socket is enough.
+        let connected = stateLock.withLock { () -> Int32? in
+            guard !isFinished, acceptedFD >= 0 else { return nil }
+            isCancelRequested = true
+            return acceptedFD
+        }
+        if let connected {
+            Darwin.shutdown(connected, SHUT_RDWR)
+        } else {
+            finish(with: .failure(PayloadError.cancelled)) { _ in }
+        }
     }
 
     private func finish(with result: Result<Void, Error>, onComplete: @escaping (Result<Void, Error>) -> Void) {

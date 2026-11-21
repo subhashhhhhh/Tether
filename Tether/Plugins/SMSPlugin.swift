@@ -79,21 +79,28 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
             return
         }
         DispatchQueue.main.async {
-            var threads = self.conversations[deviceId] ?? [:]
-            for (threadId, var conversation) in threads {
-                var changed = false
-                for m in conversation.messages.indices {
-                    for a in conversation.messages[m].attachments.indices
-                    where conversation.messages[m].attachments[a].uniqueIdentifier == identifier {
-                        conversation.messages[m].attachments[a].localURL = fileURL
-                        changed = true
-                    }
-                }
-                if changed { threads[threadId] = conversation }
-            }
-            self.conversations[deviceId] = threads
+            self.conversations[deviceId] = Self.attaching(fileURL, to: identifier, in: self.conversations[deviceId] ?? [:])
             if self.attachmentsToOpen.remove(identifier) != nil { NSWorkspace.shared.open(fileURL) }
         }
+    }
+
+    /// Points every attachment with this identifier, in any conversation,
+    /// at the fetched file.
+    static func attaching(_ fileURL: URL, to identifier: String,
+                          in threads: [Int64: SMSConversation]) -> [Int64: SMSConversation] {
+        var threads = threads
+        for (threadId, var conversation) in threads {
+            var changed = false
+            for m in conversation.messages.indices {
+                for a in conversation.messages[m].attachments.indices
+                where conversation.messages[m].attachments[a].uniqueIdentifier == identifier {
+                    conversation.messages[m].attachments[a].localURL = fileURL
+                    changed = true
+                }
+            }
+            if changed { threads[threadId] = conversation }
+        }
+        return threads
     }
 
     /// Opens an attachment, fetching it from the phone first if needed.
@@ -137,16 +144,18 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
     public func requestEarlierMessages(threadId: Int64, connection: DeviceConnection) {
         let deviceId = connection.peerDeviceInfo?.deviceId ?? ""
         let loaded = DispatchQueue.main.sync { conversations[deviceId]?[threadId]?.messages ?? [] }
-        guard let oldest = loaded.first?.date else {
+        guard let page = Self.earlierPage(before: loaded) else {
             requestConversation(threadId: threadId, connection: connection)
             return
         }
-        requestConversation(
-            threadId: threadId,
-            rangeStartTimestamp: Int64(oldest.timeIntervalSince1970 * 1000),
-            numberToRequest: max(50, loaded.count),
-            connection: connection
-        )
+        requestConversation(threadId: threadId, rangeStartTimestamp: page.start, numberToRequest: page.count, connection: connection)
+    }
+
+    /// The page before the oldest loaded message: starting there, as many as
+    /// are loaded, at least 50. Nil when nothing is loaded yet.
+    static func earlierPage(before loaded: [SMSMessage]) -> (start: Int64, count: Int)? {
+        guard let oldest = loaded.map(\.date).min() else { return nil }
+        return (Int64(oldest.timeIntervalSince1970 * 1000), max(50, loaded.count))
     }
 
     public func requestAttachment(partId: Int64, uniqueIdentifier: String, connection: DeviceConnection) {

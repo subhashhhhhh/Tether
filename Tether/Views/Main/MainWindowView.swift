@@ -72,9 +72,21 @@ enum DockPresence {
         guard !isTesting else { return }
         if NSApp.activationPolicy() != .regular { NSApp.setActivationPolicy(.regular) }
         NSApp.activate()
-        // The Dock icon appears with the switch, without a badge; put it on
-        // once the icon is there.
-        DispatchQueue.main.async { applyBadge() }
+        // The Dock creates the icon a moment after the switch, and a badge
+        // set before then is lost; it's set again once the app is active.
+        observeActivation()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { applyBadge() }
+    }
+
+    private static var activationObserver: NSObjectProtocol?
+
+    private static func observeActivation() {
+        guard activationObserver == nil else { return }
+        activationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { applyBadge() }
+        }
     }
 
     static func windowClosed() {
@@ -98,6 +110,8 @@ enum DockPresence {
     private static func applyBadge() {
         guard NSApp.activationPolicy() == .regular else { return }
         NSApp.dockTile.badgeLabel = badgeCount > 0 ? String(badgeCount) : nil
+        NSApp.dockTile.display()
+        TetherLog("[Dock] Badge \(badgeCount)")
     }
 }
 
