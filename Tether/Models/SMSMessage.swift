@@ -44,6 +44,13 @@ public struct SMSMessage: Identifiable, Sendable, Equatable {
     /// The SIM it went through (`sub_id`), when the phone knows.
     public let subId: Int64?
     public var attachments: [SMSAttachment]
+    /// The phone's own ID for it (`_id`); nil for one Tether added while
+    /// sending, before the phone reported it. SMS and MMS number theirs
+    /// separately, so it's paired with the date to name one message.
+    public var phoneId: Int64? = nil
+
+    /// What names this message on the phone, as KDE Connect desktop keys it.
+    public var phoneKey: String? { phoneId.map { "\($0)@\(Int64(date.timeIntervalSince1970 * 1000))" } }
 
     /// Android's message box: 1 inbox, 2 sent, 4 outbox, 5 failed, 6
     /// queued. Everything but the inbox was written on the phone.
@@ -134,7 +141,7 @@ public struct SMSMessage: Identifiable, Sendable, Equatable {
             }
         }
 
-        return SMSMessage(
+        var message = SMSMessage(
             event: event,
             body: body,
             addresses: addressList,
@@ -145,6 +152,8 @@ public struct SMSMessage: Identifiable, Sendable, Equatable {
             subId: subId.flatMap { $0 > 0 ? $0 : nil },
             attachments: parsedAttachments
         )
+        message.phoneId = integer(dict["_id"])
+        return message
     }
 
     /// A number from the phone's JSON, which may arrive as Int, Int64,

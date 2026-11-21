@@ -8,9 +8,13 @@ import Combine
 import Foundation
 
 public final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked Sendable {
-    /// The last few things each device sent, newest first. Kept in memory only.
-    @Published public private(set) var received: [String: [String]] = [:]
+    /// The last few things each device sent, newest first: its clipboard and
+    /// text shared from it. Kept across launches.
+    @Published public private(set) var received: [String: [String]] = [:] {
+        didSet { UserDefaults.standard.set(received, forKey: Self.receivedKey) }
+    }
     static let receivedLimit = 3
+    private static let receivedKey = "tether_received_clipboard"
 
     public let supportedPacketTypes = [
         "kdeconnect.clipboard",
@@ -20,7 +24,10 @@ public final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked S
     private var lastChangeCount: Int = 0
     private var lastReceivedContent: String = ""
     private var lastSentContent: String = ""
-    private var lastLocalClipboardTimestamp: Int64 = 0
+    /// When this Mac's clipboard last changed, to tell whether the phone's
+    /// clip on connect is newer. It starts at launch: a clip from before
+    /// Tether started mustn't replace what's on this Mac.
+    private var lastLocalClipboardTimestamp = Int64(Date().timeIntervalSince1970 * 1000)
     private var timer: Timer?
     private var activeConnections: [DeviceConnection] = []
     private let lock = NSLock()
@@ -32,6 +39,7 @@ public final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked S
     ]
 
     public init() {
+        self.received = UserDefaults.standard.dictionary(forKey: Self.receivedKey) as? [String: [String]] ?? [:]
         self.lastChangeCount = NSPasteboard.general.changeCount
         if let initial = NSPasteboard.general.string(forType: .string), !initial.isEmpty {
             self.lastSentContent = initial
@@ -109,11 +117,14 @@ public final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked S
 
         guard let deviceId = connection.peerDeviceInfo?.deviceId,
               let paired = TrustStore.shared.pairedDevice(for: deviceId),
-              paired.isClipboardSyncEnabled else {
+              let content = packet.string(for: "content"), !content.isEmpty else {
             return
         }
 
-        guard let content = packet.string(for: "content") else { return }
+        // Whatever the phone copied is kept, so it can be copied here later,
+        // even when it doesn't replace this Mac's clipboard.
+        remember(content, from: deviceId)
+        guard paired.isClipboardSyncEnabled else { return }
 
         // If it's a connect packet, verify timestamp to prevent overwriting with stale content
         if packet.type == "kdeconnect.clipboard.connect" {
@@ -141,11 +152,31 @@ public final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked S
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(content, forType: .string)
             self.lastChangeCount = NSPasteboard.general.changeCount
+            TetherLog("[ClipboardPlugin] Synced clipboard from \(connection.peerDeviceInfo?.deviceName ?? "Device"): \(content.prefix(30))...")
+        }
+    }
+
+    /// Text the phone shared with this Mac: put on the clipboard, kept with
+    /// what the phone copied, and not sent back to it.
+    public func acceptShared(_ text: String, from deviceId: String) {
+        remember(text, from: deviceId)
+        lastReceivedContent = text
+        lastSentContent = text
+        lastLocalClipboardTimestamp = Int64(Date().timeIntervalSince1970 * 1000)
+        DispatchQueue.main.async {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(text, forType: .string)
+            self.lastChangeCount = NSPasteboard.general.changeCount
+        }
+    }
+
+    private func remember(_ content: String, from deviceId: String) {
+        DispatchQueue.main.async {
             var history = self.received[deviceId] ?? []
+            guard history.first != content else { return }
             history.removeAll { $0 == content }
             history.insert(content, at: 0)
             self.received[deviceId] = Array(history.prefix(Self.receivedLimit))
-            TetherLog("[ClipboardPlugin] Synced clipboard from \(connection.peerDeviceInfo?.deviceName ?? "Device"): \(content.prefix(30))...")
         }
     }
 

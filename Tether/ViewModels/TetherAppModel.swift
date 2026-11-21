@@ -231,6 +231,7 @@ public final class TetherAppModel {
             }
         }
         vm.onCopyReceivedClipboard = { service.clipboardPlugin.copyReceived($0) }
+        vm.onCancelTransfer = { service.sharePlugin.cancelTransfer(id: $0) }
         vm.onSendFiles = { urls in service.sendFiles(urls, to: deviceId) }
         vm.onFindPhone = { service.ringPhone(deviceId) }
         vm.onLockDevice = { service.lockPhone(deviceId) }

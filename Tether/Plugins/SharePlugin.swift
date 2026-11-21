@@ -22,6 +22,8 @@ public final class SharePlugin: ObservableObject, TetherPlugin, @unchecked Senda
     private let lock = NSLock()
     private var pendingIncomingItems: [Int64: TransferItem] = [:]
     private var activeUploaders: [UUID: PayloadUploader] = [:]
+    /// Downloads in progress, by the packet that announced them.
+    private var activeDownloads: [Int64: PayloadDownloader.Handle] = [:]
     private let sendQueue = DispatchQueue(label: "com.subhashh.tether.share.send", qos: .userInitiated)
 
     public init() {}
@@ -36,7 +38,7 @@ public final class SharePlugin: ObservableObject, TetherPlugin, @unchecked Senda
 
         // 1. Text payload (no binary transfer)
         if let text = packet.string(for: "text"), !text.isEmpty {
-            handleReceivedText(text, from: deviceName)
+            handleReceivedText(text, from: deviceName, deviceId: deviceId)
             return
         }
 
@@ -83,16 +85,31 @@ public final class SharePlugin: ObservableObject, TetherPlugin, @unchecked Senda
     }
 
     public func handlePayloadFailure(connection: DeviceConnection, packet: NetworkPacket, error: Error) {
-        guard let item = lock.withLock({ pendingIncomingItems.removeValue(forKey: packet.id) }) else { return }
+        guard let item = lock.withLock({ () -> TransferItem? in
+            activeDownloads[packet.id] = nil
+            return pendingIncomingItems.removeValue(forKey: packet.id)
+        }) else { return }
         DispatchQueue.main.async {
             guard let index = self.transfers.firstIndex(where: { $0.id == item.id }) else { return }
-            self.transfers[index].status = .failed(error.localizedDescription)
+            if case PayloadError.cancelled = error {
+                self.transfers[index].status = .cancelled
+            } else {
+                self.transfers[index].status = .failed(error.localizedDescription)
+            }
         }
+    }
+
+    /// Remembers a download so it can be cancelled.
+    public func track(_ handle: PayloadDownloader.Handle, forPacket packetId: Int64) {
+        lock.withLock { activeDownloads[packetId] = handle }
     }
 
     public func handlePayload(connection: DeviceConnection, packet: NetworkPacket, fileURL payloadURL: URL) {
         let deviceName = connection.peerDeviceInfo?.deviceName ?? "Device"
-        let matchingItem = lock.withLock { pendingIncomingItems.removeValue(forKey: packet.id) }
+        let matchingItem = lock.withLock { () -> TransferItem? in
+            activeDownloads[packet.id] = nil
+            return pendingIncomingItems.removeValue(forKey: packet.id)
+        }
 
         let filename = matchingItem?.filename ?? SafeFilename.sanitize(packet.string(for: "filename"))
         let downloadsDir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
@@ -268,10 +285,14 @@ public final class SharePlugin: ObservableObject, TetherPlugin, @unchecked Senda
         return outcome
     }
 
+    /// Stops a file being sent or received.
     public func cancelTransfer(id: UUID) {
         lock.withLock {
             if let uploader = activeUploaders.removeValue(forKey: id) {
                 uploader.cancel()
+            }
+            if let packetId = pendingIncomingItems.first(where: { $0.value.id == id })?.key {
+                activeDownloads.removeValue(forKey: packetId)?.cancel()
             }
         }
         DispatchQueue.main.async {
@@ -306,9 +327,10 @@ public final class SharePlugin: ObservableObject, TetherPlugin, @unchecked Senda
     }
 
     // MARK: - Helpers
-    private func handleReceivedText(_ text: String, from deviceName: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+    private func handleReceivedText(_ text: String, from deviceName: String, deviceId: String) {
+        // Through the clipboard plugin, so it isn't sent straight back to
+        // the phone as a clipboard change, and joins the phone's recent copies.
+        TetherService.shared.clipboardPlugin.acceptShared(text, from: deviceId)
         TetherLog("[SharePlugin] Received shared text from \(deviceName): \(text.prefix(50))...")
 
         let content = UNMutableNotificationContent()

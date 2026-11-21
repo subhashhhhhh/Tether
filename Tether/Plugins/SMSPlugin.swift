@@ -220,14 +220,7 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
                     conversation.addresses = message.addresses
                 }
 
-                // Check for duplicates
-                if !conversation.messages.contains(where: {
-                    $0.body == message.body &&
-                    abs($0.date.timeIntervalSince(message.date)) < 2.0 &&
-                    $0.type == message.type
-                }) {
-                    conversation.messages.append(message)
-                }
+                conversation.messages = Self.merging(message, into: conversation.messages)
 
                 // Sort chronologically
                 conversation.messages.sort(by: { $0.date < $1.date })
@@ -236,5 +229,34 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
             self.conversations[deviceId] = threads
             TetherLog("[SMSPlugin] Processed \(parsedMessages.count) messages across \(threads.count) threads")
         }
+    }
+
+    /// Adds a message the phone reported, or replaces the copy already there.
+    /// Messages are matched by the phone's own ID, so two real texts with the
+    /// same words a second apart both stay. One Tether added while sending
+    /// is replaced when the phone reports it.
+    static func merging(_ message: SMSMessage, into messages: [SMSMessage]) -> [SMSMessage] {
+        var messages = messages
+        if let key = message.phoneKey {
+            if let index = messages.firstIndex(where: { $0.phoneKey == key }) {
+                messages[index] = message
+                return messages
+            }
+            if message.isOutgoing, let index = messages.firstIndex(where: {
+                $0.phoneId == nil && $0.isOutgoing && $0.body == message.body
+                    && abs($0.date.timeIntervalSince(message.date)) < 120
+            }) {
+                messages[index] = message
+                return messages
+            }
+            messages.append(message)
+            return messages
+        }
+        // A phone that doesn't send IDs: same words, same kind, within 2 s.
+        let isCopy = messages.contains {
+            $0.body == message.body && $0.type == message.type && abs($0.date.timeIntervalSince(message.date)) < 2
+        }
+        if !isCopy { messages.append(message) }
+        return messages
     }
 }

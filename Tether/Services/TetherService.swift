@@ -460,11 +460,12 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, MDNSDi
 
         // A packet may announce a binary payload that follows on a separate TLS
         // connection. Fetch it in the background and deliver the bytes separately.
-        guard let size = packet.payloadSize, size > 0 else { return }
+        // A file's size can be 0 (an empty file) or -1 (the phone didn't know it).
+        guard let size = packet.payloadSize, size > 0 || size == -1 || (size == 0 && packet.type == SharePlugin.shareRequestType) else { return }
         // Notification artwork is small. Reject oversized announcements before
         // opening a payload socket or consuming disk space; text still arrives.
         if packet.type == "kdeconnect.notification",
-           size > NotificationImages.maximumPayloadSize { return }
+           size <= 0 || size > NotificationImages.maximumPayloadSize { return }
         guard let rawPort = packet.payloadTransferInfo?["port"]?.value,
               let port = Self.payloadPort(from: rawPort) else {
             TetherLog("[TetherService] \(packet.type) announced \(size) bytes but no usable payload port: \(String(describing: packet.payloadTransferInfo))")
@@ -488,7 +489,7 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, MDNSDi
     nonisolated private func fetchPayload(of packet: NetworkPacket, size: Int64, port: UInt16, from connection: DeviceConnection) {
         TetherLog("[TetherService] \(packet.type) announced \(size) bytes; fetching from \(connection.host):\(port)")
 
-        PayloadDownloader.download(
+        let handle = PayloadDownloader.download(
             host: connection.host,
             port: port,
             size: size,
@@ -521,6 +522,10 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, MDNSDi
                 }
             }
         )
+        // Kept so a received file can be cancelled from the Files list.
+        if packet.type == SharePlugin.shareRequestType {
+            sharePlugin.track(handle, forPacket: packet.id)
+        }
     }
 
     /// Payload ports are integers on the wire, but tolerate a stringified value.

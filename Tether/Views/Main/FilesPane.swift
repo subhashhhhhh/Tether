@@ -64,7 +64,7 @@ struct TransfersCard: View {
 
             ForEach(items) { item in
                 Divider().padding(.leading, 16)
-                TransferRow(item: item)
+                TransferRow(item: item) { device.cancelTransfer(item.id) }
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
             }
@@ -146,6 +146,8 @@ private struct PhoneDriveSection: View {
 
 struct TransferRow: View {
     let item: TransferItem
+    /// Stops the transfer; nil where it can't be stopped from here.
+    var onCancel: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 12) {
@@ -160,8 +162,14 @@ struct TransferRow: View {
                     .truncationMode(.middle)
 
                 if item.status == .transferring {
-                    ProgressView(value: item.progress)
-                        .controlSize(.small)
+                    if item.totalBytes >= 0 {
+                        ProgressView(value: item.progress)
+                            .controlSize(.small)
+                    } else {
+                        ProgressView()
+                            .progressViewStyle(.linear)
+                            .controlSize(.small)
+                    }
                 }
 
                 // Darker than the system's secondary grey, which washes out on glass
@@ -193,6 +201,8 @@ struct TransferRow: View {
         let size = ByteCountFormatter.string(fromByteCount: item.totalBytes, countStyle: .file)
         switch item.status {
         case .transferring:
+            // The phone doesn't always know a file's size.
+            guard item.totalBytes >= 0 else { return "\(direction) · Receiving" }
             let done = ByteCountFormatter.string(fromByteCount: item.transferredBytes, countStyle: .file)
             return "\(direction) · \(done) of \(size)"
         case .failed(let reason):
@@ -210,9 +220,21 @@ struct TransferRow: View {
     private var trailing: some View {
         switch item.status {
         case .transferring:
-            Text(item.progress, format: .percent.precision(.fractionLength(0)))
-                .font(.callout.monospacedDigit())
-                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                if item.totalBytes >= 0 {
+                    Text(item.progress, format: .percent.precision(.fractionLength(0)))
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                if let onCancel {
+                    Button("Stop", systemImage: "xmark.circle.fill", action: onCancel)
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .imageScale(.large)
+                        .foregroundStyle(.secondary)
+                        .help(item.direction == .incoming ? "Stop receiving" : "Stop sending")
+                }
+            }
         case .completed:
             if let url = item.localURL {
                 Button("Show in Finder", systemImage: "magnifyingglass.circle.fill") {

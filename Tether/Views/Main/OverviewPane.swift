@@ -218,7 +218,7 @@ private struct ReceivedClipboardList: View {
                 .font(.headline)
             if device.receivedClipboard.isEmpty {
                 // Android only lets an app read the clipboard when asked to.
-                Text("Nothing yet. Tap Send Clipboard in KDE Connect on \(device.name).")
+                Text("Nothing yet. Android only lets KDE Connect send what you copy when you ask it to: add the Send clipboard tile to Quick Settings on \(device.name) and tap it after copying.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {

@@ -70,6 +70,7 @@ public final class DeviceViewModel: Identifiable, Hashable {
     public var onPing: (() -> Void)?
     public var onSendClipboard: (() -> Void)?
     public var onCopyReceivedClipboard: ((String) -> Void)?
+    public var onCancelTransfer: ((UUID) -> Void)?
     public var onSendFiles: (([URL]) -> Void)?
     public var onFindPhone: (() -> Void)?
     public var onLockDevice: (() -> Void)?
@@ -175,6 +176,7 @@ public final class DeviceViewModel: Identifiable, Hashable {
     public func ping() { onPing?() }
     public func sendClipboard() { onSendClipboard?() }
     public func copyReceivedClipboard(_ text: String) { onCopyReceivedClipboard?(text) }
+    public func cancelTransfer(_ id: UUID) { onCancelTransfer?(id) }
     public func sendFiles(_ urls: [URL]) { onSendFiles?(urls) }
     public func findMyPhone() { onFindPhone?() }
     public func lockDevice() { onLockDevice?() }
