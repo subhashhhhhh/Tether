@@ -38,21 +38,17 @@ struct OverviewPane: View {
                 let latest = Array(device.notifications.prefix(3))
                 ForEach(Array(latest.enumerated()), id: \.element.id) { index, item in
                     NotificationPreviewRow(item: item, device: device)
-                        .padding(.horizontal, Self.margin)
-                        .frame(maxWidth: Self.column + 2 * Self.margin)
-                        .frame(maxWidth: .infinity)
-                        .listRowInsets(EdgeInsets())
+                        .listRowInsets(EdgeInsets(top: 0, leading: Self.margin, bottom: 0, trailing: Self.margin))
                         .listRowSeparator(.hidden)
                         // Part of the row, not its background, so a swipe
                         // moves the whole card.
                         .background(GroupCardBackground(isFirst: index == 0, isLast: index == latest.count - 1,
-                                                        maxWidth: Self.column, margin: Self.margin))
+                                                        maxWidth: .infinity, margin: 0))
                         .listRowBackground(Color.clear)
                         .overlay(alignment: .top) {
                             if index > 0 {
                                 Divider()
-                                    .frame(maxWidth: Self.column - 32)
-                                    .padding(.horizontal, Self.margin + 16)
+                                    .padding(.horizontal, 16)
                             }
                         }
                         .swipeActions(edge: .trailing, allowsFullSwipe: true) {
@@ -84,10 +80,12 @@ struct OverviewPane: View {
         }
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
+        // No toolbar band over the narrower list's top.
+        .noTopScrollEdge()
     }
 
-    /// The page's column and its margin in a narrow window.
-    fileprivate static let column: CGFloat = 600
+    /// The page's side margin. The list fills the window, so it scrolls
+    /// anywhere in it and a swiped card slides to the edge.
     fileprivate static let margin: CGFloat = 32
 
     // MARK: Header and actions
@@ -157,8 +155,7 @@ private extension View {
     /// A row of the overview's list that isn't a notification: kept to the
     /// page's column, with no separator and nothing behind it.
     func overviewRow(top: CGFloat = 12, bottom: CGFloat = 12) -> some View {
-        frame(maxWidth: OverviewPane.column, alignment: .leading)
-            .frame(maxWidth: .infinity)
+        frame(maxWidth: .infinity, alignment: .leading)
             .listRowInsets(EdgeInsets(top: top, leading: OverviewPane.margin, bottom: bottom, trailing: OverviewPane.margin))
             .listRowSeparator(.hidden)
             .listRowBackground(Color.clear)
@@ -171,44 +168,71 @@ private extension View {
 /// sent lately, to put back on the clipboard.
 private struct ClipboardMenu: View {
     let device: DeviceViewModel
+    @State private var isShowingReceived = false
 
     var body: some View {
-        Menu {
-            Section("Sent by \(device.name)") {
-                if device.receivedClipboard.isEmpty {
-                    // Android only lets an app read the clipboard when asked to.
-                    Text("Nothing yet. Tap Send Clipboard in KDE Connect on \(device.name).")
-                } else {
-                    ForEach(Array(device.receivedClipboard.enumerated()), id: \.offset) { _, text in
-                        Button(Self.preview(of: text), systemImage: "doc.on.doc") {
-                            device.copyReceivedClipboard(text)
-                        }
-                    }
-                }
-            }
-        } label: {
-            Label("Send Clipboard", systemImage: "doc.on.clipboard")
-        } primaryAction: {
+        // Two real glass buttons rather than one split menu button: a split
+        // menu draws its own bezel and ignores the glass button style.
+        Button("Send Clipboard", systemImage: "doc.on.clipboard") {
             device.sendClipboard()
         }
-        // A split menu button draws its own bezel and ignores the glass
-        // button style, so it's borderless here, in glass of its own.
-        .menuStyle(.button)
-        .buttonStyle(.borderless)
-        .padding(.horizontal, 12)
-        .frame(height: Self.height)
-        .glassCapsule(interactive: true)
-        .fixedSize()
-        .help("Send this Mac's clipboard to \(device.name). The arrow lists what \(device.name) sent.")
-    }
+        .help("Send this Mac's clipboard to \(device.name)")
 
-    /// A large glass button's height, so it sits level with Find Phone.
-    static let height: CGFloat = 28
+        // A glass button with a popover, not a menu: a menu in content
+        // draws its own bezel and doesn't take the glass style.
+        Button {
+            isShowingReceived.toggle()
+        } label: {
+            Label("Clipboard from \(device.name)", systemImage: "chevron.down")
+                .labelStyle(.iconOnly)
+                // Square, and as tall as the text buttons' labels, so the
+                // circle is as tall as they are.
+                .frame(width: 16, height: 16)
+        }
+        .buttonBorderShape(.circle)
+        .popover(isPresented: $isShowingReceived, arrowEdge: .bottom) {
+            ReceivedClipboardList(device: device) { isShowingReceived = false }
+        }
+        .help("What \(device.name) sent to this Mac's clipboard")
+    }
 
     static func preview(of text: String) -> String {
         let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         return trimmed.count > 48 ? String(trimmed.prefix(48)) + "…" : trimmed
+    }
+}
+
+/// What the device last put on this Mac's clipboard; a click copies one again.
+private struct ReceivedClipboardList: View {
+    let device: DeviceViewModel
+    let close: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Sent by \(device.name)")
+                .font(.headline)
+            if device.receivedClipboard.isEmpty {
+                // Android only lets an app read the clipboard when asked to.
+                Text("Nothing yet. Tap Send Clipboard in KDE Connect on \(device.name).")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ForEach(Array(device.receivedClipboard.enumerated()), id: \.offset) { _, text in
+                    Button {
+                        device.copyReceivedClipboard(text)
+                        close()
+                    } label: {
+                        Label(ClipboardMenu.preview(of: text), systemImage: "doc.on.doc")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .help("Copy to this Mac's clipboard")
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+        .padding(14)
+        .frame(width: 300, alignment: .leading)
     }
 }
 

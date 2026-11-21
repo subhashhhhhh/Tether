@@ -8,6 +8,10 @@ import SwiftUI
 struct NotificationsPane: View {
     let device: DeviceViewModel
     @State private var isConfirmingDismissAll = false
+    /// The list fills the window, so it scrolls anywhere in it and a swiped
+    /// card slides to the edge. The cards keep a margin rather than a fixed
+    /// width, so Dismiss is uncovered right behind a card.
+    static let rowInsets = EdgeInsets(top: 0, leading: 24, bottom: 0, trailing: 24)
 
     /// Notifications grouped by app, the app with the newest one first.
     private var groups: [(app: String, items: [PhoneNotification])] {
@@ -42,30 +46,22 @@ struct NotificationsPane: View {
                     .padding(.horizontal, 4)
                     .padding(.top, 20)
                     .padding(.bottom, 6)
-                    .frame(maxWidth: 680)
-                    .padding(.horizontal, 16)
-                    .frame(maxWidth: .infinity)
-                    .listRowInsets(EdgeInsets())
+                    .listRowInsets(Self.rowInsets)
                     .listRowSeparator(.hidden)
 
                     ForEach(Array(group.items.enumerated()), id: \.element.id) { index, notification in
-                        // The row is the window's width, so a swipe carries
-                        // it to the edge; its content keeps to the column.
                         NotificationRow(notification: notification, device: device)
-                            .frame(maxWidth: 680)
-                            .padding(.horizontal, 16)
-                            .frame(maxWidth: .infinity)
-                            .listRowInsets(EdgeInsets())
+                            .listRowInsets(Self.rowInsets)
                             .listRowSeparator(.hidden)
                             // The card is part of the row, not the row's
                             // background, so a swipe moves the whole card.
-                            .background(GroupCardBackground(isFirst: index == 0, isLast: index == group.items.count - 1))
+                            .background(GroupCardBackground(isFirst: index == 0, isLast: index == group.items.count - 1,
+                                                            maxWidth: .infinity, margin: 0))
                             .listRowBackground(Color.clear)
                             .overlay(alignment: .top) {
                                 if index > 0 {
                                     Divider()
-                                        .frame(maxWidth: 680 - 32)
-                                        .padding(.horizontal, 32)
+                                        .padding(.horizontal, 16)
                                 }
                             }
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
@@ -80,6 +76,8 @@ struct NotificationsPane: View {
             }
             .listStyle(.inset)
             .scrollContentBackground(.hidden)
+            // No toolbar band over the narrower list's top.
+            .noTopScrollEdge()
             .animation(.default, value: device.notifications)
             // It clears the phone's notification shade too, so it asks first.
             .confirmationDialog("Dismiss all notifications on \(device.name)?", isPresented: $isConfirmingDismissAll) {

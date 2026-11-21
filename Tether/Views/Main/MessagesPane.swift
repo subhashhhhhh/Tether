@@ -18,9 +18,6 @@ struct MessagesPane: View {
     private static let draftTag = Int64.min
     /// Who a new message went to, until its conversation shows up to select.
     @State private var pendingRecipient: String?
-    /// The list has focus when the page opens, so its selection is the
-    /// accent colour rather than the grey of a list you've left.
-    @FocusState private var isListFocused: Bool
     /// True while the empty page is waiting on the phone's conversations.
     @State private var isSyncing = true
     @State private var syncAttempt = 0
@@ -73,12 +70,10 @@ struct MessagesPane: View {
                 if !Task.isCancelled { isSyncing = false }
             }
         } else {
-            HSplitView {
+            // The divider stays where it was left, across visits and launches.
+            SavedSplitView(autosaveName: "TetherMessagesSplit", leadingWidths: 240...340, trailingMinimumWidth: 320) {
                 threadList
-                    // HSplitView opens a pane at its minimum or maximum and
-                    // ignores the ideal; with nothing pulling the other way,
-                    // the list opens at its widest.
-                    .frame(minWidth: 240, maxWidth: 340)
+            } trailing: {
                 Group {
                     if isComposing && selectedThreadId == Self.draftTag {
                         NewConversationView(device: device, onSent: { number in
@@ -92,11 +87,12 @@ struct MessagesPane: View {
                         ContentUnavailableView("No Conversation Selected", systemImage: "bubble.left.and.bubble.right")
                     }
                 }
-                .frame(minWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            // Each pane decides for itself how far up it reaches.
+            .ignoresSafeArea(.container, edges: .top)
             .onAppear {
                 if selectedThreadId == nil { selectedThreadId = device.smsThreads.first?.id }
-                isListFocused = true
                 if startsComposing { startComposing() }
             }
             .onChange(of: selectedThreadId) {
@@ -179,9 +175,7 @@ struct MessagesPane: View {
         .listStyle(.inset)
         .scrollContentBackground(.hidden)
         .noTopScrollEdge()
-        .focusable()
-        .focused($isListFocused)
-        .focusEffectDisabled()
+        .modifier(FocusedOnAppear())
         .onMoveCommand { direction in
             let ids = filteredThreads.map(\.id)
             guard let current = selectedThreadId.flatMap(ids.firstIndex) else { return }
@@ -200,6 +194,21 @@ struct MessagesPane: View {
                 .padding(.top, searchTop)
         }
         .ignoresSafeArea(.container, edges: isSidebarCollapsed ? [] : .top)
+    }
+}
+
+/// The list has focus when the page opens, so arrow keys move through it.
+/// Its own focus state: the list is a separate SwiftUI hierarchy inside the
+/// split view, which a focus state in the page can't reach.
+private struct FocusedOnAppear: ViewModifier {
+    @FocusState private var isFocused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .focusable()
+            .focused($isFocused)
+            .focusEffectDisabled()
+            .onAppear { isFocused = true }
     }
 }
 
