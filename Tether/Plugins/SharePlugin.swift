@@ -320,9 +320,17 @@ public final class SharePlugin: ObservableObject, TetherPlugin, @unchecked Senda
         UNUserNotificationCenter.current().add(request)
     }
 
+    /// Links a phone may open on this Mac. Anything else (a file: URL, or
+    /// a scheme that starts an app doing something) is only shown.
+    static let openableSchemes: Set<String> = ["http", "https", "mailto", "tel", "sms", "facetime", "maps", "geo"]
+
     private func handleReceivedURL(_ url: URL, from deviceName: String) {
-        DispatchQueue.main.async {
-            NSWorkspace.shared.open(url)
+        if let scheme = url.scheme?.lowercased(), Self.openableSchemes.contains(scheme) {
+            DispatchQueue.main.async {
+                NSWorkspace.shared.open(url)
+            }
+        } else {
+            TetherLog("[SharePlugin] Not opening a \(url.scheme ?? "schemeless") link from \(deviceName)")
         }
         TetherLog("[SharePlugin] Received shared URL from \(deviceName): \(url.absoluteString)")
 

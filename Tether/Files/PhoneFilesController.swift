@@ -78,7 +78,12 @@ final class PhoneFilesController {
     private var disconnectedAt: [String: Date] = [:]
     private static let reconnectGrace: TimeInterval = 30
     private var routers: [String: PhoneFilesRouter] = [:]
-    private var mounts: [String: PhoneMount] = [:]
+    private var mounts: [String: PhoneMount] = [:] {
+        didSet { updateEjectCheck() }
+    }
+    /// A backup for the unmount notification, which can be missed. It runs
+    /// only while a drive is mounted.
+    private var ejectCheck: Task<Void, Never>?
     private var started = false
 
     private init() {
@@ -99,10 +104,18 @@ final class PhoneFilesController {
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didUnmountNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { PhoneFilesController.shared.checkForEjectedDrives() }
         }
-        Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(10))
-                self?.checkForEjectedDrives()
+    }
+
+    private func updateEjectCheck() {
+        if mounts.isEmpty {
+            ejectCheck?.cancel()
+            ejectCheck = nil
+        } else if ejectCheck == nil {
+            ejectCheck = Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(10), tolerance: .seconds(2))
+                    self?.checkForEjectedDrives()
+                }
             }
         }
     }

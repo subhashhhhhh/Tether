@@ -220,7 +220,11 @@ enum MotionPreference {
 }
 
 private struct MotionPreferenceModifier: ViewModifier {
-    @AppStorage(MotionPreference.key) private var reduceMotion = false
+    @AppStorage(MotionPreference.key) private var tetherReduceMotion = false
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+
+    /// The system's Reduce Motion counts as well as Tether's own setting.
+    private var reduceMotion: Bool { tetherReduceMotion || systemReduceMotion }
 
     func body(content: Content) -> some View {
         content.transaction { transaction in

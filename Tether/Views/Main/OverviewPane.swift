@@ -191,10 +191,19 @@ private struct ClipboardMenu: View {
         } primaryAction: {
             device.sendClipboard()
         }
+        // A split menu button draws its own bezel and ignores the glass
+        // button style, so it's borderless here, in glass of its own.
         .menuStyle(.button)
+        .buttonStyle(.borderless)
+        .padding(.horizontal, 12)
+        .frame(height: Self.height)
+        .glassCapsule(interactive: true)
         .fixedSize()
         .help("Send this Mac's clipboard to \(device.name). The arrow lists what \(device.name) sent.")
     }
+
+    /// A large glass button's height, so it sits level with Find Phone.
+    static let height: CGFloat = 28
 
     static func preview(of text: String) -> String {
         let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
@@ -331,7 +340,7 @@ private struct NotificationPreviewRow: View {
 /// Shown only while Accessibility access is missing; once granted there's nothing to say.
 private struct RemoteInputRow: View {
     @State private var isTrusted = InputSynthesizer.shared.isAccessibilityTrusted
-    @Environment(\.controlActiveState) private var controlActiveState
+    @Environment(\.appearsActive) private var appearsActive
 
     var body: some View {
         Group {
@@ -357,7 +366,7 @@ private struct RemoteInputRow: View {
             }
         }
         // Re-check when the window regains focus, e.g. after visiting System Settings.
-        .onChange(of: controlActiveState) {
+        .onChange(of: appearsActive) {
             isTrusted = InputSynthesizer.shared.isAccessibilityTrusted
         }
     }

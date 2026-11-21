@@ -137,7 +137,7 @@ public final class InputSynthesizer: @unchecked Sendable {
                 lock.withLock { self.isLeftButtonPressed = false }
             } else if isScroll {
                 // dy = vertical, -dx = horizontal scroll
-                if let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: Int32(dy), wheel2: -Int32(dx), wheel3: 0) {
+                if let event = CGEvent(scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: Self.wheelDelta(dy), wheel2: -Self.wheelDelta(dx), wheel3: 0) {
                     event.post(tap: .cghidEventTap)
                 }
             } else if !key.isEmpty || validSpecialKey {
@@ -242,5 +242,12 @@ public final class InputSynthesizer: @unchecked Sendable {
             event?.cgEvent?.post(tap: .cghidEventTap)
         }
         return true
+    }
+
+    /// A scroll amount from the peer as a wheel delta. Int32(_:) traps on a
+    /// value out of range or not a number.
+    nonisolated static func wheelDelta(_ value: Double) -> Int32 {
+        guard value.isFinite else { return 0 }
+        return Int32(max(-10_000, min(10_000, value.rounded())))
     }
 }

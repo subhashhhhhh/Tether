@@ -394,28 +394,31 @@ struct TetherCommands: Commands {
 
         CommandMenu("Device") {
             let device = appModel.primaryDevice
-            Button("Send Files…") {
+            // Named, so it's clear which phone a command reaches when the
+            // selected one is offline and another is used instead.
+            let suffix = device.map { " to \($0.name)" } ?? ""
+            Button("Send Files\(suffix)…") {
                 if let device { device.sendFiles(FilePicker.chooseFiles(sendingTo: device.name)) }
             }
             .keyboardShortcut("o")
             .disabled(device == nil)
 
-            Button("Send Clipboard") { device?.sendClipboard() }
+            Button("Send Clipboard\(suffix)") { device?.sendClipboard() }
                 .keyboardShortcut("c", modifiers: [.command, .shift])
                 .disabled(device == nil)
 
             Divider()
 
-            Button("Find Phone") { device?.findMyPhone() }
+            Button(device.map { "Ring \($0.name)" } ?? "Find Phone") { device?.findMyPhone() }
                 .keyboardShortcut("f", modifiers: [.command, .shift])
                 .disabled(device == nil)
 
             if device?.canLock == true {
-                Button("Lock") { device?.lockDevice() }
+                Button(device.map { "Lock \($0.name)" } ?? "Lock") { device?.lockDevice() }
                     .keyboardShortcut("l", modifiers: [.command, .shift])
             }
 
-            Button("Ping") { device?.ping() }
+            Button(device.map { "Ping \($0.name)" } ?? "Ping") { device?.ping() }
                 .disabled(device == nil)
         }
     }

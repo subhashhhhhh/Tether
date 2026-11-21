@@ -397,7 +397,7 @@ private struct DevicesSettings: View {
 
 private struct PermissionsSettings: View {
     @Bindable var viewModel: SettingsViewModel
-    @Environment(\.controlActiveState) private var controlActiveState
+    @Environment(\.appearsActive) private var appearsActive
 
     var body: some View {
         Form {
@@ -439,7 +439,7 @@ private struct PermissionsSettings: View {
             }
         }
         .formStyle(.grouped)
-        .onChange(of: controlActiveState) { viewModel.refresh() }
+        .onChange(of: appearsActive) { viewModel.refresh() }
     }
 
     private var notificationState: PermissionState {

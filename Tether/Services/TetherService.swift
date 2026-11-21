@@ -53,6 +53,7 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, MDNSDi
     private var pathMonitor: NWPathMonitor?
     private var reachOutTasks: [String: Task<Void, Never>] = [:]
     private var tailscaleTimer: DispatchSourceTimer?
+    private var warnedMismatches: Set<String> = []
     private let tcpListener = TCPListenerService()
     private var discoveredDeviceEndpoints: [String: (host: String, port: Int)] = [:]
     private var connectingDeviceIds = Set<String>()
@@ -339,6 +340,19 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, MDNSDi
     nonisolated public func deviceConnectionDidConnect(_ connection: DeviceConnection) {
         Task { @MainActor in
             guard let id = connection.peerDeviceInfo?.deviceId else { return }
+            // Anything on the network can claim a device's ID. One that can't
+            // prove it with the pinned certificate doesn't get to push out
+            // the verified connection that's already there.
+            if let current = self.connectedDevices[id], current !== connection,
+               current.pairState == .paired, !current.isDisconnected, connection.pairState != .paired {
+                TetherLog("[TetherService] Keeping the verified connection to \(id); refusing an unverified one from \(connection.host)")
+                self.pendingConnections.removeValue(forKey: "in_\(connection.host):\(connection.port)")
+                if self.pendingConnections["out_\(id)"] === connection {
+                    self.pendingConnections.removeValue(forKey: "out_\(id)")
+                }
+                connection.disconnect()
+                return
+            }
             self.connectingDeviceIds.remove(id)
             self.pendingConnections.removeValue(forKey: "out_\(id)")
             self.pendingConnections.removeValue(forKey: "in_\(connection.host):\(connection.port)")
@@ -509,6 +523,9 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, MDNSDi
                 self.dismissPairingRequestNotification(deviceId: info.deviceId)
                 self.activatePlugins(for: connection)
             } else if state == .notPaired {
+                if connection.hasCertificateMismatch {
+                    self.warnCertificateMismatch(info)
+                }
                 if let req = self.incomingPairRequest, req.connection === connection {
                     self.incomingPairRequest = nil
                     self.dismissPairingRequestNotification(deviceId: info.deviceId)
@@ -673,8 +690,11 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, MDNSDi
         let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
         // Peers come and go as phones sleep or switch networks; a minute keeps
         // reconnection quick without spawning the CLI constantly.
-        timer.schedule(deadline: .now(), repeating: .seconds(60))
+        timer.schedule(deadline: .now(), repeating: .seconds(60), leeway: .seconds(10))
         timer.setEventHandler { [weak self] in
+            // No CLI run every minute for a setting that's off; turning it
+            // on is picked up on the next tick.
+            guard TailscaleDiscovery.isEnabled else { return }
             Task { @MainActor in self?.refreshTailscale() }
         }
         timer.resume()
@@ -741,6 +761,18 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, MDNSDi
                 TetherLog("[TetherService] Failed to post pairing notification: \(error)")
             }
         }
+    }
+
+    /// A paired device came back with a different certificate. That is what
+    /// an impostor looks like, and also a reinstall of KDE Connect, so it's
+    /// said once per launch with what to do in the second case.
+    private func warnCertificateMismatch(_ info: DeviceInfo) {
+        guard warnedMismatches.insert(info.deviceId).inserted else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "\(info.deviceName) Wasn't Connected"
+        content.body = "It identified itself with a different key than when it was paired. If you reinstalled KDE Connect on it, unpair it in Tether and pair again."
+        UNUserNotificationCenter.current().add(
+            UNNotificationRequest(identifier: "kde_mismatch_\(info.deviceId)", content: content, trigger: nil))
     }
 
     private func dismissPairingRequestNotification(deviceId: String) {

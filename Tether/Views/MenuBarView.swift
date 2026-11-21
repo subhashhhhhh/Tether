@@ -326,6 +326,20 @@ public struct MenuBarView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                // The same key KDE Connect shows on the phone; comparing the
+                // two is what makes pairing safe on a shared network.
+                if let fingerprint = request.fingerprint {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Check that the phone shows the same key:")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 1) {
+                            ForEach(FingerprintFormat.rows(fingerprint), id: \.self) { Text($0) }
+                        }
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                    }
+                }
                 HStack {
                     Button {
                         appModel.rejectIncomingPairRequest()

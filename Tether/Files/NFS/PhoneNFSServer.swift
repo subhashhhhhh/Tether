@@ -521,7 +521,7 @@ actor PhoneNFSServer {
 
     private func read(_ args: inout XDRReader, _ reply: inout XDRWriter) async throws {
         let path = try readHandle(&args)
-        let offset = Int64(try args.uint64())
+        let offset = Int64(clamping: try args.uint64())
         let count = Int(min(try args.uint32(), 1 << 20))
 
         let data: Data
@@ -634,7 +634,7 @@ actor PhoneNFSServer {
 
     private func write(_ args: inout XDRReader, _ reply: inout XDRWriter) async throws {
         let path = try readHandle(&args)
-        let offset = Int64(try args.uint64())
+        let offset = Int64(clamping: try args.uint64())
         _ = try args.uint32() // count
         _ = try args.uint32() // stable_how: we always answer UNSTABLE and upload on COMMIT
         let data = try args.opaque()
@@ -763,9 +763,9 @@ actor PhoneNFSServer {
 
     private func readdir(_ args: inout XDRReader, _ reply: inout XDRWriter, plus: Bool) async throws {
         let folder = try readHandle(&args)
-        let cookie = Int(try args.uint64())
+        let cookie = Int(clamping: try args.uint64())
         _ = try args.fixed(8) // cookie verifier
-        let dirCount = Int(try args.uint32())
+        let dirCount = Int(clamping: try args.uint32())
         let maxCount = plus ? Int(try args.uint32()) : dirCount
         // Leave room for the reply header and trailing fields.
         let budget = max(maxCount - 512, 1024)
