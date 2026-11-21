@@ -313,25 +313,11 @@ public final class PayloadUploader: @unchecked Sendable {
     }
 
     private static func makeListeningSocket(port: UInt16) -> Int32 {
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        // IPv4 and IPv6, so the phone can fetch over either.
+        let fd = SocketAddress.listener(port: port, reusePort: false)
         guard fd >= 0 else { return -1 }
 
-        var reuse: Int32 = 1
-        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
-
-        var addr = sockaddr_in()
-        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = port.bigEndian
-        addr.sin_addr.s_addr = INADDR_ANY
-
-        let bindResult = withUnsafePointer(to: &addr) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
-                Darwin.bind(fd, sockaddrPointer, socklen_t(MemoryLayout<sockaddr_in>.size))
-            }
-        }
-
-        guard bindResult == 0, Darwin.listen(fd, 1) == 0 else {
+        guard Darwin.listen(fd, 1) == 0 else {
             Darwin.close(fd)
             return -1
         }
@@ -367,15 +353,7 @@ public final class PayloadUploader: @unchecked Sendable {
             return
         }
 
-        var clientAddr = sockaddr_in()
-        var addrLen = socklen_t(MemoryLayout<sockaddr_in>.size)
-        let clientFD = withUnsafeMutablePointer(to: &clientAddr) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
-                Darwin.accept(listenSocket, sockaddrPointer, &addrLen)
-            }
-        }
-
-        guard clientFD >= 0 else {
+        guard let clientFD = SocketAddress.accept(listenSocket)?.fd else {
             finish(with: .failure(PayloadError.socketFailure(errno)), onComplete: onComplete)
             return
         }
@@ -591,17 +569,19 @@ public enum PayloadDownloader {
         handle: Handle,
         onProgress: @escaping (Double) -> Void
     ) -> Result<URL, Error> {
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard var address = SocketAddress.make(host: host, port: port) else {
+            return .failure(PayloadError.socketFailure(EINVAL))
+        }
+        let fd = socket(Int32(address.storage.ss_family), SOCK_STREAM, 0)
         guard fd >= 0 else { return .failure(PayloadError.socketFailure(errno)) }
         defer { Darwin.close(fd) }
         guard handle.attach(fd) else { return .failure(PayloadError.cancelled) }
 
         PayloadTLS.configureSocket(fd)
 
-        var (addr, addrLen) = makeSockaddr(host: host, port: port)
-        let connectResult = withUnsafePointer(to: &addr) { pointer in
+        let connectResult = withUnsafePointer(to: &address.storage) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
-                Darwin.connect(fd, sockaddrPointer, addrLen)
+                Darwin.connect(fd, sockaddrPointer, address.length)
             }
         }
 
@@ -715,12 +695,4 @@ public enum PayloadDownloader {
         return .success(destination)
     }
 
-    private static func makeSockaddr(host: String, port: UInt16) -> (sockaddr_in, socklen_t) {
-        var addr = sockaddr_in()
-        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = port.bigEndian
-        inet_pton(AF_INET, host, &addr.sin_addr)
-        return (addr, socklen_t(MemoryLayout<sockaddr_in>.size))
-    }
 }

@@ -4,6 +4,7 @@
 //
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct MessagesPane: View {
     @Bindable var device: DeviceViewModel
@@ -453,7 +454,7 @@ private struct MessageList: View {
                             .padding(.top, 16)
                             .padding(.bottom, 6)
                     case .message(let message, let startsRun):
-                        MessageBubble(message: message)
+                        MessageBubble(message: message, device: device)
                             .padding(.top, startsRun ? 8 : 2)
                     }
                 }
@@ -546,32 +547,76 @@ private struct MessageComposer: View {
 
 private struct MessageBubble: View {
     let message: SMSMessage
+    let device: DeviceViewModel
 
     private var alignment: Alignment { message.isOutgoing ? .trailing : .leading }
 
     var body: some View {
         VStack(alignment: message.isOutgoing ? .trailing : .leading, spacing: 4) {
-            if !message.attachments.isEmpty {
-                Label("\(message.attachments.count) attachment\(message.attachments.count == 1 ? "" : "s")", systemImage: "paperclip")
-                    .font(.caption)
+            // Pictures sit above the bubble on their own, as in Messages.
+            ForEach(message.attachments) { attachment in
+                AttachmentView(attachment: attachment) { device.openAttachment(attachment) }
             }
             if !message.body.isEmpty {
                 Text(message.body)
                     .textSelection(.enabled)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .foregroundStyle(message.isOutgoing ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+                    .background(
+                        message.isOutgoing ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.primary.opacity(0.08)),
+                        in: .rect(cornerRadius: 17, style: .continuous)
+                    )
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .foregroundStyle(message.isOutgoing ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
-        .background(
-            message.isOutgoing ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.primary.opacity(0.08)),
-            in: .rect(cornerRadius: 17, style: .continuous)
-        )
         .help(message.date.formatted(date: .abbreviated, time: .shortened))
         // A bubble takes at most about two thirds of the conversation's
         // width, so a long text stays readable and its side stays obvious.
         .containerRelativeFrame(.horizontal, alignment: alignment) { width, _ in width * 0.68 }
         .frame(maxWidth: .infinity, alignment: alignment)
+    }
+}
+
+/// A text's photo or file: the phone's small preview where there is one,
+/// else the file's kind. A click opens it, fetching it from the phone first.
+private struct AttachmentView: View {
+    let attachment: SMSAttachment
+    let open: () -> Void
+
+    private static let thumbnails = NSCache<NSString, NSImage>()
+
+    /// Decoded once per attachment, not on every redraw.
+    private var thumbnail: NSImage? {
+        let key = attachment.uniqueIdentifier as NSString
+        if let cached = Self.thumbnails.object(forKey: key) { return cached }
+        guard let encoded = attachment.encodedThumbnail, let data = Data(base64Encoded: encoded),
+              let image = NSImage(data: data) else { return nil }
+        Self.thumbnails.setObject(image, forKey: key)
+        return image
+    }
+
+    private var kind: String {
+        UTType(mimeType: attachment.mimeType)?.localizedDescription?.capitalized ?? "Attachment"
+    }
+
+    var body: some View {
+        Button(action: open) {
+            if let thumbnail {
+                Image(nsImage: thumbnail)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 200, height: 200)
+                    .clipShape(.rect(cornerRadius: 17, style: .continuous))
+            } else {
+                Label(kind, systemImage: attachment.mimeType.hasPrefix("audio") ? "waveform" : "doc")
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(Color.primary.opacity(0.08), in: .rect(cornerRadius: 17, style: .continuous))
+            }
+        }
+        .buttonStyle(.plain)
+        .help(attachment.localURL == nil ? "Get from phone and open" : "Open")
+        .accessibilityLabel(kind)
     }
 }
 
@@ -657,7 +702,7 @@ private struct NewConversationView: View {
                 } else if !sent.isEmpty {
                     ScrollView {
                         VStack(spacing: 4) {
-                            ForEach(sent) { MessageBubble(message: $0) }
+                            ForEach(sent) { MessageBubble(message: $0, device: device) }
                         }
                         .padding(16)
                     }

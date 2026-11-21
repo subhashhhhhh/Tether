@@ -264,6 +264,9 @@ public final class TetherAppModel {
             guard let conn = service.connectedDevices[deviceId] else { return }
             service.smsPlugin.requestAllConversations(connection: conn)
         }
+        vm.onOpenAttachment = { attachment in
+            service.smsPlugin.openAttachment(attachment, connection: service.connectedDevices[deviceId])
+        }
         vm.onOpenThread = { threadId in
             guard let conn = service.connectedDevices[deviceId] else { return }
             service.smsPlugin.requestConversation(threadId: threadId, connection: conn)
@@ -276,6 +279,10 @@ public final class TetherAppModel {
         }
         vm.onSetVolume = { val in service.setPhoneVolume(Int(val * 100), deviceId: deviceId) }
         vm.onMediaAction = { action in service.mediaAction(action, deviceId: deviceId) }
+        vm.onChooseMediaPlayer = { player in
+            guard let conn = service.connection(for: deviceId) else { return }
+            service.mediaControlPlugin.choosePlayer(player, connection: conn)
+        }
         vm.onReplyToNotification = { notification, text in
             service.notificationPlugin.reply(to: notification, text: text)
         }
@@ -321,6 +328,8 @@ public final class TetherAppModel {
             update(dev, \.nowPlayingArtist, nowPlaying?.artist)
             update(dev, \.nowPlayingAlbum, nowPlaying?.album)
             update(dev, \.nowPlayingIsPlaying, nowPlaying?.isPlaying ?? false)
+            update(dev, \.mediaPlayers, service.mediaControlPlugin.players[id] ?? [])
+            update(dev, \.currentMediaPlayer, nowPlaying?.player)
             dev.setAlbumArt(service.mediaControlPlugin.albumArt[id])
 
             // Same order as TetherService.setPhoneVolume: the media player's

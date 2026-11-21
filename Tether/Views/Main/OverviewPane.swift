@@ -249,7 +249,21 @@ private struct NowPlayingPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            PanelHeader("Now Playing")
+            PanelHeader("Now Playing") {
+                // With more than one media app open on the phone, which one
+                // is shown and controlled.
+                if device.mediaPlayers.count > 1 {
+                    Picker("Player", selection: Binding(
+                        get: { device.currentMediaPlayer ?? "" },
+                        set: { device.chooseMediaPlayer($0) }
+                    )) {
+                        ForEach(device.mediaPlayers, id: \.self) { Text($0).tag($0) }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .fixedSize()
+                }
+            }
             VStack(spacing: 14) {
                 HStack(spacing: 14) {
                     artwork

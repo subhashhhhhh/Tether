@@ -5,6 +5,7 @@
 //  Plugin for viewing and replying to SMS conversations from macOS.
 //
 
+import AppKit
 import Foundation
 import Combine
 
@@ -48,39 +49,61 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
         }
     }
 
+    /// Where attachments are kept once fetched, so each is fetched once.
+    static let attachmentDirectory: URL = {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        return caches.appendingPathComponent("TetherAttachments", isDirectory: true)
+    }()
+
+    /// The file for an attachment; `uniqueIdentifier` comes from the phone, so
+    /// it's only ever used sanitised.
+    static func attachmentURL(for uniqueIdentifier: String) -> URL {
+        attachmentDirectory.appendingPathComponent(SafeFilename.sanitize(uniqueIdentifier, fallback: "attachment"))
+    }
+
+    /// Attachments clicked before they'd arrived, opened when they do.
+    private var attachmentsToOpen: Set<String> = []
+
     public func handlePayload(connection: DeviceConnection, packet: NetworkPacket, fileURL payloadURL: URL) {
-        guard packet.type == Self.attachmentFileType, let deviceId = connection.peerDeviceInfo?.deviceId else { return }
-        // `filename` is the attachment's identifier on the phone; it is matched
-        // as-is below but must never be used as a path without sanitising.
-        let filename = packet.string(for: "filename") ?? "attachment"
-        let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        let attachmentDir = cachesDir.appendingPathComponent("TetherAttachments", isDirectory: true)
-
-        try? FileManager.default.createDirectory(at: attachmentDir, withIntermediateDirectories: true)
-        let fileURL = attachmentDir.appendingPathComponent(SafeFilename.sanitize(filename, fallback: "attachment"))
-
+        guard packet.type == Self.attachmentFileType, let deviceId = connection.peerDeviceInfo?.deviceId,
+              let identifier = packet.string(for: "filename"), !identifier.isEmpty else { return }
+        // The phone names the attachment only by its identifier, not its
+        // conversation, so every conversation of this phone is searched.
+        let fileURL = Self.attachmentURL(for: identifier)
         do {
+            try? FileManager.default.createDirectory(at: Self.attachmentDirectory, withIntermediateDirectories: true)
             try? FileManager.default.removeItem(at: fileURL)
             try FileManager.default.moveItem(at: payloadURL, to: fileURL)
-            TetherLog("[SMSPlugin] Saved SMS attachment to \(fileURL.path)")
-
-            let targetThreadId = (packet.int64(for: "thread_id")) != 0 ? packet.int64(for: "thread_id") : nil
-            if let threadId = targetThreadId {
-                DispatchQueue.main.async {
-                    if var conversation = self.conversations[deviceId]?[threadId] {
-                        for msgIndex in conversation.messages.indices {
-                            for attIndex in conversation.messages[msgIndex].attachments.indices {
-                                if conversation.messages[msgIndex].attachments[attIndex].uniqueIdentifier == filename {
-                                    conversation.messages[msgIndex].attachments[attIndex].localURL = fileURL
-                                }
-                            }
-                        }
-                        self.conversations[deviceId, default: [:]][threadId] = conversation
+        } catch {
+            TetherLog("[SMSPlugin] Failed to save an attachment: \(error)")
+            return
+        }
+        DispatchQueue.main.async {
+            var threads = self.conversations[deviceId] ?? [:]
+            for (threadId, var conversation) in threads {
+                var changed = false
+                for m in conversation.messages.indices {
+                    for a in conversation.messages[m].attachments.indices
+                    where conversation.messages[m].attachments[a].uniqueIdentifier == identifier {
+                        conversation.messages[m].attachments[a].localURL = fileURL
+                        changed = true
                     }
                 }
+                if changed { threads[threadId] = conversation }
             }
-        } catch {
-            TetherLog("[SMSPlugin] Failed to write attachment: \(error)")
+            self.conversations[deviceId] = threads
+            if self.attachmentsToOpen.remove(identifier) != nil { NSWorkspace.shared.open(fileURL) }
+        }
+    }
+
+    /// Opens an attachment, fetching it from the phone first if needed.
+    public func openAttachment(_ attachment: SMSAttachment, connection: DeviceConnection?) {
+        let fileURL = Self.attachmentURL(for: attachment.uniqueIdentifier)
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            NSWorkspace.shared.open(fileURL)
+        } else if let connection {
+            attachmentsToOpen.insert(attachment.uniqueIdentifier)
+            requestAttachment(partId: attachment.partId, uniqueIdentifier: attachment.uniqueIdentifier, connection: connection)
         }
     }
 
@@ -202,7 +225,11 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
 
         var parsedMessages: [SMSMessage] = []
         for raw in rawMessages {
-            if let msg = SMSMessage.from(dictionary: raw) {
+            if var msg = SMSMessage.from(dictionary: raw) {
+                for index in msg.attachments.indices {
+                    let url = Self.attachmentURL(for: msg.attachments[index].uniqueIdentifier)
+                    if FileManager.default.fileExists(atPath: url.path) { msg.attachments[index].localURL = url }
+                }
                 parsedMessages.append(msg)
             }
         }

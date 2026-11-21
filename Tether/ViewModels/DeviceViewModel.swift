@@ -38,6 +38,9 @@ public final class DeviceViewModel: Identifiable, Hashable {
     public var nowPlayingArtist: String?
     public var nowPlayingAlbum: String?
     public var nowPlayingIsPlaying: Bool
+    /// The phone's media apps, and the one shown.
+    public var mediaPlayers: [String] = []
+    public var currentMediaPlayer: String?
     /// Decoded once when the bytes change, never in a view body.
     public private(set) var albumArt: NSImage?
     @ObservationIgnored private var albumArtData: Data?
@@ -82,9 +85,11 @@ public final class DeviceViewModel: Identifiable, Hashable {
     public var onSendSMS: (([String], String, Int64?, Int64?) -> Void)?
     public var onRefreshMessages: (() -> Void)?
     public var onOpenThread: ((Int64) -> Void)?
+    public var onOpenAttachment: ((SMSAttachment) -> Void)?
     public var onLoadEarlierMessages: ((Int64) -> Void)?
     public var onSetVolume: ((Float) -> Void)?
     public var onMediaAction: ((String) -> Void)?
+    public var onChooseMediaPlayer: ((String?) -> Void)?
     public var onReplyToNotification: ((PhoneNotification, String) -> Void)?
     public var onDismissNotification: ((PhoneNotification) -> Void)?
     public var onNotificationAction: ((PhoneNotification, String) -> Void)?
@@ -251,9 +256,11 @@ public final class DeviceViewModel: Identifiable, Hashable {
 
     public func refreshMessages() { onRefreshMessages?() }
     public func openThread(_ threadId: Int64) { onOpenThread?(threadId) }
+    public func openAttachment(_ attachment: SMSAttachment) { onOpenAttachment?(attachment) }
     public func loadEarlierMessages(_ threadId: Int64) { onLoadEarlierMessages?(threadId) }
     public func setVolume(_ val: Float) { onSetVolume?(val) }
     public func playPauseMedia() { onMediaAction?("PlayPause") }
+    public func chooseMediaPlayer(_ player: String) { onChooseMediaPlayer?(player) }
     public func nextMedia() { onMediaAction?("Next") }
     public func previousMedia() { onMediaAction?("Previous") }
     public func reply(to notification: PhoneNotification, text: String) { onReplyToNotification?(notification, text) }
