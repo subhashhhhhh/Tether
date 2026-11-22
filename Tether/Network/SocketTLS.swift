@@ -120,23 +120,28 @@ enum SocketTLS {
         }
     }
 
-    /// Notices within about 11 seconds that a phone has vanished without
+    /// Notices within about 35 seconds that a phone has vanished without
     /// closing the connection (Wi-Fi turned off, out of range), so it stops
     /// showing as connected. macOS's defaults take minutes: a probe every 75 s,
     /// 8 times. Probes are only sent while nothing else is flowing, and the
     /// phone's kernel answers them without waking KDE Connect.
+    ///
+    /// It can't be much shorter. A phone with its screen off parks its Wi-Fi
+    /// radio between beacons and can take several seconds to answer anything
+    /// (9 s measured on a Pixel 9), so a tighter window drops a phone that is
+    /// only asleep, and the notifications that arrive before it reconnects.
     static func detectDeadPeerQuickly(_ fd: Int32) {
         func set(_ level: Int32, _ option: Int32, _ value: Int32) {
             var value = value
             setsockopt(fd, level, option, &value, socklen_t(MemoryLayout<Int32>.size))
         }
         set(SOL_SOCKET, SO_KEEPALIVE, 1)
-        set(IPPROTO_TCP, TCP_KEEPALIVE, 5)   // idle seconds before the first probe
-        set(IPPROTO_TCP, TCP_KEEPINTVL, 2)   // seconds between probes
-        set(IPPROTO_TCP, TCP_KEEPCNT, 3)     // unanswered probes before giving up
+        set(IPPROTO_TCP, TCP_KEEPALIVE, 10)  // idle seconds before the first probe
+        set(IPPROTO_TCP, TCP_KEEPINTVL, 5)   // seconds between probes
+        set(IPPROTO_TCP, TCP_KEEPCNT, 5)     // unanswered probes before giving up
         // Keepalive is suspended while sent data is unacknowledged; without this,
         // retransmitting to a vanished phone would keep the connection for minutes.
-        set(IPPROTO_TCP, TCP_RXT_CONNDROPTIME, 15)
+        set(IPPROTO_TCP, TCP_RXT_CONNDROPTIME, 35)
     }
 
     /// SHA-256 fingerprint of the peer's leaf certificate, lowercase hex with colons.

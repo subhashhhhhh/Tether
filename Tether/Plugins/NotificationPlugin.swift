@@ -165,7 +165,8 @@ public final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin,
             if activeConnections[deviceId] === connection {
                 activeConnections.removeValue(forKey: deviceId)
                 imageTracker.removeDevice(deviceId)
-                images.removeAll()
+                // The artwork cache stays: after a reconnect the phone names
+                // pictures it already sent by hash and doesn't send them again.
                 // The phone re-sends everything it is still showing on reconnect.
                 notifications[deviceId] = nil
             }
