@@ -10,6 +10,30 @@
 //
 
 import Foundation
+import Observation
+
+/// What each phone last said when asked for its files, for Settings ›
+/// Permissions: Android decides, on the phone, whether KDE Connect may
+/// share storage.
+@MainActor
+@Observable
+final class PhoneFileAccess {
+    static let shared = PhoneFileAccess()
+
+    enum Answer: Equatable {
+        case shared
+        case refused(String)
+        case noAnswer
+    }
+
+    private(set) var answers: [String: Answer] = [:]
+
+    nonisolated static func record(_ answer: Answer, for deviceId: String) {
+        Task { @MainActor in
+            if shared.answers[deviceId] != answer { shared.answers[deviceId] = answer }
+        }
+    }
+}
 
 nonisolated final class SftpPlugin: TetherPlugin, @unchecked Sendable {
     let supportedPacketTypes = [PacketType.sftp]
@@ -80,6 +104,10 @@ nonisolated final class SftpPlugin: TetherPlugin, @unchecked Sendable {
             return // `serverRunning` status
         }
 
+        switch result {
+        case .success: PhoneFileAccess.record(.shared, for: id)
+        case .failure(let error): PhoneFileAccess.record(.refused(error.localizedDescription), for: id)
+        }
         let pending = lock.withLock { Array((waiters.removeValue(forKey: id) ?? [:]).values) }
         pending.forEach { $0.resume(with: result) }
     }
@@ -98,8 +126,9 @@ nonisolated final class SftpPlugin: TetherPlugin, @unchecked Sendable {
             }
             DispatchQueue.global().asyncAfter(deadline: .now() + 15) { [weak self] in
                 guard let self else { return }
-                lock.withLock { self.waiters[deviceId]?.removeValue(forKey: token) }?
-                    .resume(throwing: RequestError.timedOut)
+                guard let waiter = lock.withLock({ self.waiters[deviceId]?.removeValue(forKey: token) }) else { return }
+                PhoneFileAccess.record(.noAnswer, for: deviceId)
+                waiter.resume(throwing: RequestError.timedOut)
             }
         }
     }

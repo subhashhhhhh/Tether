@@ -433,34 +433,55 @@ private struct PhoneFileAccessRow: View {
 
     var body: some View {
         let state = PhoneFilesController.shared.driveState(for: deviceId)
-        PermissionRow(title: "Files", detail: detail(state), systemImage: "folder", status: status(state)) {
+        let answer = PhoneFileAccess.shared.answers[deviceId]
+        PermissionRow(title: "Files", detail: detail(state, answer), systemImage: "folder", status: status(state, answer)) {
             PhoneDriveToggle()
         }
     }
 
-    private func status(_ state: PhoneFilesController.DriveState) -> Permissions.Status {
-        switch state {
-        case .mounted: .allowed
-        case .failed(let message) where Self.isPermissionError(message): .off
-        default: .unknown
+    /// What the phone last answered decides; a drive can be mounted while
+    /// the phone refuses every listing.
+    private func status(_ state: PhoneFilesController.DriveState, _ answer: PhoneFileAccess.Answer?) -> Permissions.Status {
+        if state == .turnedOff { return .unknown }
+        switch answer {
+        case .shared: return .allowed
+        case .refused, .noAnswer: return .off
+        case nil:
+            if case .failed(let message) = state, Self.isPermissionError(message) { return .off }
+            return .unknown
         }
     }
 
-    private func detail(_ state: PhoneFilesController.DriveState) -> String {
+    private func detail(_ state: PhoneFilesController.DriveState, _ answer: PhoneFileAccess.Answer?) -> String {
+        if state != .turnedOff {
+            switch answer {
+            case .refused(let message) where Self.isPermissionError(message):
+                return Self.allFilesAccessHelp(deviceName)
+            case .refused(let message):
+                return "KDE Connect on \(deviceName) won't share its storage: \(message)"
+            case .noAnswer:
+                return "KDE Connect on \(deviceName) didn't start its file server. On the phone, open KDE Connect, choose this Mac, and turn on Filesystem expose in Plugin settings."
+            default: break
+            }
+        }
         switch state {
         case .failed(let message) where Self.isPermissionError(message):
-            "KDE Connect on \(deviceName) isn't allowed to share its storage. On the phone, open Settings › Apps › Special app access › All files access, and turn on KDE Connect."
+            return Self.allFilesAccessHelp(deviceName)
         case .failed(let message):
-            "The phone drive couldn't start: \(message)"
+            return "The phone drive couldn't start: \(message)"
         case .turnedOff:
-            "Off. Turn on to show \(deviceName) in Finder as a drive."
+            return "Off. Turn on to show \(deviceName) in Finder as a drive."
         case .notConnected, .ejected:
-            "Shows \(deviceName) in Finder as a drive. Checked when the phone connects."
+            return "Shows \(deviceName) in Finder as a drive. Checked when the phone connects."
         case .mounting:
-            "Checking…"
+            return "Checking…"
         case .mounted:
-            "\(deviceName) shares its storage, and shows in Finder as a drive."
+            return "\(deviceName) shares its storage, and shows in Finder as a drive."
         }
+    }
+
+    private static func allFilesAccessHelp(_ deviceName: String) -> String {
+        "KDE Connect on \(deviceName) isn't allowed to share its storage. On the phone, open Settings › Apps › Special app access › All files access, and turn on KDE Connect."
     }
 
     static func isPermissionError(_ message: String) -> Bool {
