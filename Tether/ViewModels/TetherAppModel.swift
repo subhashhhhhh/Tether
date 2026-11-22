@@ -36,6 +36,8 @@ public final class TetherAppModel {
     public var incomingPairRequest: PairRequestViewModel?
     public var selectedDeviceId: String?
     public var isShowingConnectByIP = false
+    /// Set by the menu bar popover; the main window shows it and clears it.
+    var sectionRequest: SectionRequest?
     public var isRunning: Bool = false
     public var notificationAuthStatus: UNAuthorizationStatus = .authorized
 
@@ -121,7 +123,8 @@ public final class TetherAppModel {
             service.mediaControlPlugin.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
             service.remoteVolumePlugin.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
             service.notificationPlugin.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
-            service.contactsPlugin.objectWillChange.map { _ in () }.eraseToAnyPublisher()
+            service.contactsPlugin.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
+            service.clipboardPlugin.objectWillChange.map { _ in () }.eraseToAnyPublisher()
         ]
         // objectWillChange fires before the value lands; hop a runloop turn and
         // coalesce bursts (a single SMS sync can publish hundreds of times).
@@ -227,6 +230,7 @@ public final class TetherAppModel {
                 service.clipboardPlugin.broadcastClipboard(content: text)
             }
         }
+        vm.onCopyReceivedClipboard = { service.clipboardPlugin.copyReceived($0) }
         vm.onSendFiles = { urls in service.sendFiles(urls, to: deviceId) }
         vm.onFindPhone = { service.ringPhone(deviceId) }
         vm.onLockDevice = { service.lockPhone(deviceId) }
@@ -274,6 +278,9 @@ public final class TetherAppModel {
         vm.onReplyToNotification = { notification, text in
             service.notificationPlugin.reply(to: notification, text: text)
         }
+        vm.onNotificationAction = { notification, action in
+            service.notificationPlugin.perform(action, on: notification)
+        }
         vm.onDismissNotification = { notification in
             service.notificationPlugin.dismiss(notification)
         }
@@ -306,6 +313,8 @@ public final class TetherAppModel {
             update(dev, \.contacts, service.contactsPlugin.books[id] ?? ContactBook())
             update(dev, \.commands, service.runCommandPlugin.commands)
             update(dev, \.notifications, service.notificationPlugin.notifications[id] ?? [])
+            update(dev, \.receivedClipboard, service.clipboardPlugin.received[id] ?? [])
+            update(dev, \.appGlyphs, service.notificationPlugin.appGlyphs[id] ?? [:])
 
             let nowPlaying = service.mediaControlPlugin.nowPlaying[id]
             update(dev, \.nowPlayingTitle, nowPlaying?.title)

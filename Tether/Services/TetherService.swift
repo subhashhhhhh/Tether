@@ -4,7 +4,9 @@
 //
 
 import Foundation
+import AppKit
 import Combine
+import Network
 import SwiftUI
 import UserNotifications
 
@@ -43,6 +45,12 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, MDNSDi
     private let mdnsDiscovery = MDNSDiscovery()
     private var pairedDevicesObserver: AnyCancellable?
     private var heardAt: [String: Date] = [:]
+    /// When each device last announced itself over UDP, connected or not.
+    private var announcedAt: [String: Date] = [:]
+    private var wakeObserver: AnyCancellable?
+    private var wakeTask: Task<Void, Never>?
+    private var redialTasks: [String: Task<Void, Never>] = [:]
+    private var pathMonitor: NWPathMonitor?
     private var reachOutTasks: [String: Task<Void, Never>] = [:]
     private var tailscaleTimer: DispatchSourceTimer?
     private let tcpListener = TCPListenerService()
@@ -97,6 +105,17 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, MDNSDi
             self?.mdnsDiscovery.setPairedDeviceIds(Set(devices.keys))
         }
         startTailscaleDiscovery()
+        wakeObserver = NSWorkspace.shared.notificationCenter
+            .publisher(for: NSWorkspace.didWakeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.announceAfterWake() }
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            guard path.status == .satisfied else { return }
+            Task { @MainActor [weak self] in self?.redialPairedDevices() }
+        }
+        monitor.start(queue: .main)
+        pathMonitor = monitor
         TetherLog("[TetherService] Service started successfully.")
     }
 
@@ -111,6 +130,15 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, MDNSDi
             task.cancel()
         }
         reachOutTasks.removeAll()
+        wakeObserver = nil
+        wakeTask?.cancel()
+        wakeTask = nil
+        pathMonitor?.cancel()
+        pathMonitor = nil
+        for task in redialTasks.values {
+            task.cancel()
+        }
+        redialTasks.removeAll()
         tcpListener.stop()
         tailscaleTimer?.cancel()
         tailscaleTimer = nil
@@ -161,6 +189,9 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, MDNSDi
                 self.discoveredDevices.append(deviceInfo)
             }
 
+            if self.trustStore.isTrusted(deviceId: deviceInfo.deviceId) {
+                self.announcedAt[deviceInfo.deviceId] = Date()
+            }
             if let conn = self.connectedDevices[deviceInfo.deviceId], !conn.isDisconnected {
                 return
             }
@@ -216,6 +247,61 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, MDNSDi
             }
             TetherLog("[TetherService] Sent last attempt to \(deviceId) at \(host) at 45 s")
         }
+    }
+
+    /// The broadcast timer doesn't run during sleep, so without this a phone
+    /// waits out whatever was left of the interval. Wi-Fi takes a few seconds
+    /// to come back, hence more than one announcement.
+    private func announceAfterWake() {
+        redialPairedDevices()
+        wakeTask?.cancel()
+        wakeTask = Task {
+            var elapsed = 0.0
+            for second in [1.0, 4, 10] {
+                try? await Task.sleep(for: .seconds(second - elapsed))
+                elapsed = second
+                guard !Task.isCancelled, isRunning else { return }
+                udpDiscovery.broadcastPresence(routine: true)
+            }
+            refreshTailscale()
+        }
+    }
+
+    /// After a wake or a network change: every paired device with a known
+    /// address that isn't connected.
+    private func redialPairedDevices() {
+        guard isRunning else { return }
+        for deviceId in trustStore.pairedDevices.keys {
+            guard let endpoint = discoveredDeviceEndpoints[deviceId] else { continue }
+            redial(deviceId, lastHost: endpoint.host, restart: true)
+        }
+    }
+
+    /// Dials a paired device that should still be there. An announcement only
+    /// invites the phone to connect, and a phone that never saw the old
+    /// connection close (this Mac's Wi-Fi dropped, or it slept) ignores it
+    /// until its own side times out. Its listener answers straight away.
+    private func redial(_ deviceId: String, lastHost: String, restart: Bool = false) {
+        guard isRunning, trustStore.isTrusted(deviceId: deviceId) else { return }
+        if restart {
+            redialTasks[deviceId]?.cancel()
+        } else if redialTasks[deviceId] != nil {
+            return
+        }
+        let task = Task {
+            var elapsed = 0.0
+            for second in [0.0, 2, 5, 10, 20, 30, 45, 60] {
+                try? await Task.sleep(for: .seconds(second - elapsed))
+                elapsed = second
+                guard !Task.isCancelled, isRunning, trustStore.isTrusted(deviceId: deviceId),
+                      !isDeviceConnected(deviceId: deviceId) else { break }
+                let endpoint = discoveredDeviceEndpoints[deviceId]
+                    ?? (host: lastHost, port: Int(UDPDiscoveryService.defaultPort))
+                connect(to: deviceId, host: endpoint.host, port: endpoint.port)
+            }
+            if !Task.isCancelled { redialTasks[deviceId] = nil }
+        }
+        redialTasks[deviceId] = task
     }
 
     public func refreshAdvertisement() {
@@ -289,8 +375,12 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, MDNSDi
         Task { @MainActor in
             let id = connection.peerDeviceInfo?.deviceId ?? connection.targetDeviceId
             if let id = id {
-                self.connectingDeviceIds.remove(id)
-                self.pendingConnections.removeValue(forKey: "out_\(id)")
+                // An inbound attempt only claims this ID; its failure must not
+                // cancel the outbound connection to the same device.
+                if self.pendingConnections["out_\(id)"] === connection {
+                    self.pendingConnections.removeValue(forKey: "out_\(id)")
+                    self.connectingDeviceIds.remove(id)
+                }
                 if self.connectedDevices[id] === connection {
                     self.connectionLock.withLock {
                         self.activeDeviceIds.remove(id)
@@ -306,6 +396,11 @@ public final class TetherService: ObservableObject, UDPDiscoveryDelegate, MDNSDi
                     }
                     if let info = connection.peerDeviceInfo, info.deviceType == .phone, connection.pairState == .paired {
                         AwayLock.shared.phoneDisconnected(id, name: info.deviceName)
+                    }
+                    if connection.pairState == .paired {
+                        // "Last seen" is when it left, not when it last connected.
+                        self.trustStore.updateLastSeen(deviceId: id)
+                        self.redial(id, lastHost: connection.host)
                     }
                 }
             }

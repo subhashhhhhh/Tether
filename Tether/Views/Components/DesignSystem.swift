@@ -82,6 +82,9 @@ struct InitialsAvatar: View {
     var size: CGFloat = 32
     /// The contact's photo, shown instead of initials when there is one.
     var photo: Data? = nil
+    /// A business's sender ID ("AD-HDFCBK-S"), not a person: initials made
+    /// from it would suggest someone.
+    var isSenderID = false
 
     /// Decoded photos, so a long list doesn't decode them on every redraw.
     private static let images = NSCache<NSData, NSImage>()
@@ -117,6 +120,11 @@ struct InitialsAvatar: View {
                         .scaledToFill()
                         .frame(width: size, height: size)
                         .clipShape(Circle())
+                } else if isSenderID {
+                    Image(systemName: "building.2.fill")
+                        .resizable()
+                        .scaledToFit()
+                        .padding(size * 0.26)
                 } else if isPhoneNumber {
                     Image(systemName: "person.fill")
                         .resizable()
@@ -129,6 +137,34 @@ struct InitialsAvatar: View {
             }
             .foregroundStyle(.white)
             .accessibilityHidden(true)
+    }
+}
+
+// MARK: - Search
+
+/// The search pill Messages floats over its list: glass, tall enough to be
+/// an easy target, with nothing behind it but the list.
+struct SearchPill: View {
+    @Binding var text: String
+    var prompt = "Search"
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            TextField(prompt, text: $text)
+                .textFieldStyle(.plain)
+            if !text.isEmpty {
+                Button("Clear", systemImage: "xmark.circle.fill") { text = "" }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 13)
+        .frame(height: 36)
+        .glassCapsule()
     }
 }
 

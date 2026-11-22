@@ -10,35 +10,66 @@ struct FilesPane: View {
     let device: DeviceViewModel
 
     var body: some View {
-        GlassPage("Files", subtitle: "Send files to \(device.name), or drop them anywhere in this window.") {
-            Button("Choose Files…") {
-                device.sendFiles(FilePicker.chooseFiles(sendingTo: device.name))
-            }
-            .glassButton()
-        } content: {
+        GlassPage {
             PhoneDriveSection(device: device)
 
-            GlassSection("Transfers", footer: "Files from \(device.name) are saved to your Downloads folder.") {
-                Button("Open Downloads") {
-                    if let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first {
-                        NSWorkspace.shared.open(downloads)
+            VStack(alignment: .leading, spacing: 10) {
+                PanelHeader("Transfers") {
+                    Button("Open Downloads") {
+                        if let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first {
+                            NSWorkspace.shared.open(downloads)
+                        }
                     }
+                    .buttonStyle(.link)
                 }
-                .buttonStyle(.link)
-            } content: {
-                if device.transfers.isEmpty {
-                    Label("Nothing sent or received yet.", systemImage: "arrow.up.arrow.down")
-                        .foregroundStyle(.secondary)
-                        .glassRow()
-                } else {
-                    ForEach(Array(device.transfers.enumerated()), id: \.element.id) { index, item in
-                        if index > 0 { Divider().padding(.leading, 56) }
-                        TransferRow(item: item)
-                            .glassRow()
-                    }
-                }
+                TransfersCard(device: device)
+                Text("Files from \(device.name) are saved to your Downloads folder.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 4)
             }
         }
+    }
+}
+
+/// Sending files and what has gone back and forth, in one card: the drop
+/// hint with a button to choose files, then the transfers. The overview
+/// shows the latest few; the Files page shows them all.
+struct TransfersCard: View {
+    let device: DeviceViewModel
+    var limit: Int?
+
+    private var items: [TransferItem] {
+        limit.map { Array(device.transfers.prefix($0)) } ?? device.transfers
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: "arrow.up.doc")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28)
+                    .accessibilityHidden(true)
+                Text("Drop files anywhere in this window to send them to \(device.name).")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 8)
+                Button("Choose Files…") {
+                    device.sendFiles(FilePicker.chooseFiles(sendingTo: device.name))
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            ForEach(items) { item in
+                Divider().padding(.leading, 16)
+                TransferRow(item: item)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+            }
+        }
+        .contentCard()
     }
 }
 

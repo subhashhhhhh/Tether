@@ -172,6 +172,11 @@ public final class DeviceConnection: @unchecked Sendable {
 
     private func performOutgoingConnection() {
         TetherLog("[DeviceConnection] Initiating outgoing TCP connection to \(host):\(port)")
+        guard let tcpPort = in_port_t(exactly: port), tcpPort != 0 else {
+            TetherLog("[DeviceConnection] Invalid port: \(port)")
+            self.notifyDisconnect(error: nil)
+            return
+        }
         let fd = socket(AF_INET, SOCK_STREAM, 0)
         guard fd >= 0 else {
             TetherLog("[DeviceConnection] Failed to create socket: \(errno)")
@@ -189,7 +194,7 @@ public final class DeviceConnection: @unchecked Sendable {
 
         var addr = sockaddr_in()
         addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = in_port_t(port).bigEndian
+        addr.sin_port = tcpPort.bigEndian
         if inet_pton(AF_INET, host, &addr.sin_addr) <= 0 {
             TetherLog("[DeviceConnection] Invalid IP address: \(host)")
             close(fd)

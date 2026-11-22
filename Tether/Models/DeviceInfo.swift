@@ -118,6 +118,7 @@ public struct DeviceInfo: Codable, Sendable, Identifiable {
         "kdeconnect.notification",
         "kdeconnect.notification.request",
         "kdeconnect.notification.reply",
+        "kdeconnect.notification.action",
         "kdeconnect.clipboard",
         "kdeconnect.clipboard.connect",
         "kdeconnect.battery",
@@ -194,6 +195,8 @@ public struct DeviceInfo: Codable, Sendable, Identifiable {
         return NetworkPacket(type: "kdeconnect.identity", body: body)
     }
 
+    static let validTCPPorts = 1...Int(UInt16.max)
+
     // Parse from packet
     public static func from(packet: NetworkPacket) -> DeviceInfo? {
         guard packet.type == "kdeconnect.identity",
@@ -207,7 +210,14 @@ public struct DeviceInfo: Codable, Sendable, Identifiable {
         let version = packet.int(for: "protocolVersion", default: NetworkPacket.protocolVersion)
         let incoming = Set(packet.stringArray(for: "incomingCapabilities"))
         let outgoing = Set(packet.stringArray(for: "outgoingCapabilities"))
-        let port = packet.body["tcpPort"] != nil ? packet.int(for: "tcpPort") : nil
+        // The identity arrives over UDP before anything is verified, so a port
+        // that can't be dialled drops the whole packet rather than reaching connect().
+        var port: Int?
+        if packet.body["tcpPort"] != nil {
+            let claimed = packet.int(for: "tcpPort")
+            guard Self.validTCPPorts.contains(claimed) else { return nil }
+            port = claimed
+        }
 
         return DeviceInfo(
             deviceId: deviceId,

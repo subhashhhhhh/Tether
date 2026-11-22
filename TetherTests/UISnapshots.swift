@@ -35,9 +35,16 @@ import ScreenCaptureKit
                 try await render(MessagesPane(device: phone, startsComposing: true), size: CGSize(width: 820, height: 560),
                                  dark: dark, to: dir.appendingPathComponent("messages-compose-\(suffix).png"))
             }
-            try await render(MenuBarView(appModel: .mock()), size: CGSize(width: 320, height: 480), dark: dark,
+            try await render(MenuBarView(appModel: .mock()), size: CGSize(width: 340, height: 700), dark: dark,
                              titled: false, to: dir.appendingPathComponent("menubar-\(suffix).png"))
         }
+
+        UserDefaults.standard.set("mock_phone", forKey: "tether_folded_devices")
+        let folded = TetherAppModel.mock()
+        folded.selectedDeviceId = "mock_tablet"
+        try await render(MainWindowView(appModel: folded, initialSection: .notifications), size: windowSize, dark: true,
+                         to: dir.appendingPathComponent("main-folded-dark.png"))
+        UserDefaults.standard.removeObject(forKey: "tether_folded_devices")
 
         try await render(MainWindowView(appModel: .mockEmpty()), size: windowSize, dark: false,
                          to: dir.appendingPathComponent("main-onboarding-light.png"))
@@ -96,6 +103,15 @@ import ScreenCaptureKit
     /// Hosts `view` in a real window and snapshots the window frame, so toolbars
     /// and other window chrome are included.
     private func render<V: View>(_ view: V, size: CGSize, dark: Bool, titled: Bool = true, to url: URL) async throws {
+        let environment = ProcessInfo.processInfo.environment
+        // TETHER_SNAPSHOT_ONLY=main-messages,menubar renders just those files.
+        if let only = environment["TETHER_SNAPSHOT_ONLY"],
+           !only.split(separator: ",").contains(where: { url.lastPathComponent.hasPrefix($0) }) {
+            return
+        }
+        // TETHER_SNAPSHOT_QUIET=1 keeps the window behind everything and
+        // leaves focus where it is, at the cost of an inactive look.
+        let quiet = environment["TETHER_SNAPSHOT_QUIET"] != nil
         let style: NSWindow.StyleMask = titled
             ? [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
             : [.borderless]
@@ -107,9 +123,13 @@ import ScreenCaptureKit
         window.setContentSize(size)
         // Active, as people see the window they're using: accent-coloured
         // selection and a toolbar that isn't dimmed.
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
+        if quiet {
+            window.orderBack(nil)
+        } else {
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+        }
         defer { window.close() }
 
         try await Task.sleep(for: .milliseconds(900))

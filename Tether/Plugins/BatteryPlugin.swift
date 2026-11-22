@@ -40,6 +40,21 @@ public final class BatteryPlugin: ObservableObject, TetherPlugin, @unchecked Sen
         }
         // Like desktop KDE Connect: the current charge as soon as the phone connects.
         if let packet = Self.packet(MacBattery.status()) { connection.send(packet: packet) }
+        // The phone reports its battery when it changes, not when it
+        // reconnects, so until it does, show what it last said.
+        if let id = connection.peerDeviceInfo?.deviceId, let saved = Self.saved(for: id) {
+            DispatchQueue.main.async {
+                if self.deviceBatteries[id] == nil { self.deviceBatteries[id] = saved }
+            }
+        }
+    }
+
+    private static func key(_ deviceId: String) -> String { "tether_battery_\(deviceId)" }
+
+    private static func saved(for deviceId: String) -> DeviceBatteryInfo? {
+        guard let values = UserDefaults.standard.dictionary(forKey: key(deviceId)),
+              let charge = values["charge"] as? Int, (0...100).contains(charge) else { return nil }
+        return DeviceBatteryInfo(currentCharge: charge, isCharging: values["charging"] as? Bool ?? false)
     }
 
     public func onDisconnected(connection: DeviceConnection) {
@@ -71,6 +86,7 @@ public final class BatteryPlugin: ObservableObject, TetherPlugin, @unchecked Sen
             thresholdBatteryEvent: threshold
         )
 
+        UserDefaults.standard.set(["charge": charge, "charging": isCharging], forKey: Self.key(deviceId))
         DispatchQueue.main.async {
             self.deviceBatteries[deviceId] = info
         }
