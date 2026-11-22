@@ -248,8 +248,32 @@ final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendable {
         return parsedMessages
     }
 
-    private func merge(_ parsedMessages: [SMSMessage], deviceId: String) {
+    /// Messages parsed but not yet merged, by device. Used on parseQueue only.
+    nonisolated(unsafe) private var pending: [String: [SMSMessage]] = [:]
+    nonisolated(unsafe) private var isFlushScheduled = false
+    /// How long parsed messages wait for more before they're merged. A phone
+    /// sends each conversation in its own packet when asked for them all,
+    /// about 80-100 ms apart, so without this a sync re-sorted and redrew the
+    /// whole list per packet. 300 ms gathers several and is too short to see
+    /// on a new text.
+    nonisolated private static let batchWindow: TimeInterval = 0.3
+
+    /// Called on parseQueue: holds messages briefly so a burst merges once.
+    nonisolated private func merge(_ parsedMessages: [SMSMessage], deviceId: String) {
         guard !parsedMessages.isEmpty else { return }
+        pending[deviceId, default: []] += parsedMessages
+        guard !isFlushScheduled else { return }
+        isFlushScheduled = true
+        Self.parseQueue.asyncAfter(deadline: .now() + Self.batchWindow) { [weak self] in
+            guard let self else { return }
+            let batch = self.pending
+            self.pending = [:]
+            self.isFlushScheduled = false
+            for (deviceId, messages) in batch { self.publish(messages, deviceId: deviceId) }
+        }
+    }
+
+    nonisolated private func publish(_ parsedMessages: [SMSMessage], deviceId: String) {
         let byThread = Dictionary(grouping: parsedMessages, by: \.threadId)
         DispatchQueue.main.async {
             // Each thread merged once per batch and published once.

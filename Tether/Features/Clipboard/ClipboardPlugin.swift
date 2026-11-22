@@ -30,6 +30,7 @@ final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked Sendable
     private var lastLocalClipboardTimestamp = Int64(Date().timeIntervalSince1970 * 1000)
     private var timer: Timer?
     private var activeConnections: [DeviceConnection] = []
+    private var settingsChange: AnyCancellable?
     // All of this plugin's state is used on the main thread only: the
     // pasteboard timer, connects and packets are all delivered there.
 
@@ -47,24 +48,50 @@ final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked Sendable
         }
     }
 
+    /// Whether the screens are asleep or another user has the Mac: nobody
+    /// can copy anything, so there's nothing to check for.
+    private var isAway = false
+    private var awayObservers: [NSObjectProtocol] = []
+
     /// macOS has no clipboard-changed notification, so the change count is
-    /// polled. Only while a device is there to send to.
+    /// polled. Only while a device is there to send to and someone is here
+    /// to copy. Once a second, with slack so the system can group it with
+    /// other wakeups: a copy reaches the phone well before it can be pasted.
     private func updateMonitoring() {
         DispatchQueue.main.async {
-            let wanted = !self.activeConnections.isEmpty
+            self.observeAwayIfNeeded()
+            let wanted = !self.isAway && self.activeConnections.contains { Self.sendsCopies(to: $0) }
             if wanted, self.timer == nil {
                 // Catch up silently: a copy made while nobody was connected
                 // isn't sent the moment a phone appears.
                 self.lastChangeCount = NSPasteboard.general.changeCount
-                let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+                let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
                     self?.checkPasteboard()
                 }
-                timer.tolerance = 0.2
+                timer.tolerance = 0.5
                 RunLoop.main.add(timer, forMode: .common)
                 self.timer = timer
             } else if !wanted, let timer = self.timer {
                 timer.invalidate()
                 self.timer = nil
+            }
+        }
+    }
+
+    private func observeAwayIfNeeded() {
+        guard awayObservers.isEmpty else { return }
+        let center = NSWorkspace.shared.notificationCenter
+        let changes: [(NSNotification.Name, Bool)] = [
+            (NSWorkspace.screensDidSleepNotification, true),
+            (NSWorkspace.screensDidWakeNotification, false),
+            (NSWorkspace.sessionDidResignActiveNotification, true),
+            (NSWorkspace.sessionDidBecomeActiveNotification, false),
+        ]
+        awayObservers = changes.map { name, away in
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                guard let self, self.isAway != away else { return }
+                self.isAway = away
+                self.updateMonitoring()
             }
         }
     }
@@ -92,11 +119,23 @@ final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked Sendable
         broadcastClipboard(content: text)
     }
 
+    /// This Mac's copies go to this device as they're made.
+    private static func sendsCopies(to connection: DeviceConnection) -> Bool {
+        guard let deviceId = connection.peerDeviceInfo?.deviceId else { return false }
+        return TrustStore.shared.pairedDevice(for: deviceId)?.isClipboardSyncEnabled ?? false
+    }
+
     func onConnected(connection: DeviceConnection) {
         guard let deviceId = connection.peerDeviceInfo?.deviceId,
-              let paired = TrustStore.shared.pairedDevice(for: deviceId),
-              paired.isClipboardSyncEnabled else {
+              TrustStore.shared.pairedDevice(for: deviceId) != nil else {
             return
+        }
+        // Turning sending on or off in Settings starts or stops the checks
+        // without reconnecting.
+        if settingsChange == nil {
+            settingsChange = TrustStore.shared.objectWillChange.sink { [weak self] _ in
+                self?.updateMonitoring()
+            }
         }
 
         activeConnections.removeAll { $0.peerDeviceInfo?.deviceId == deviceId }
@@ -121,9 +160,11 @@ final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked Sendable
         // Whatever the phone copied is kept, so it can be copied here later,
         // even when it doesn't replace this Mac's clipboard.
         remember(content, from: deviceId)
-        guard paired.isClipboardSyncEnabled else { return }
 
-        // If it's a connect packet, verify timestamp to prevent overwriting with stale content
+        // Android only sends a copy when someone taps Send Clipboard, so that
+        // always lands here. The one it sends on connect is automatic: it's
+        // used only with automatic sync on, and only if it's newer.
+        if packet.type == PacketType.clipboardConnect, !paired.isClipboardSyncEnabled { return }
         if packet.type == PacketType.clipboardConnect,
            Self.isStale(connectTimestamp: packet.int64(for: "timestamp", default: 0), localChange: lastLocalClipboardTimestamp) {
             TetherLog("[ClipboardPlugin] Ignoring the phone's clip from before this Mac's last change")
@@ -211,12 +252,8 @@ final class ClipboardPlugin: ObservableObject, TetherPlugin, @unchecked Sendable
             type: PacketType.clipboard,
             body: ["content": content]
         )
-        for connection in activeConnections {
-            if let deviceId = connection.peerDeviceInfo?.deviceId,
-               let paired = TrustStore.shared.pairedDevice(for: deviceId),
-               paired.isClipboardSyncEnabled {
-                connection.send(packet: packet)
-            }
+        for connection in activeConnections where Self.sendsCopies(to: connection) {
+            connection.send(packet: packet)
         }
     }
 }

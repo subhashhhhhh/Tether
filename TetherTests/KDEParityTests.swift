@@ -240,3 +240,37 @@ struct ReceivedFileTests {
         #expect(SharePlugin.openableSchemes == ["http", "https", "mailto"])
     }
 }
+
+struct PacketDecodingTests {
+    private let samples = [
+        #"{"id":1700000000000,"type":"kdeconnect.notification","body":{"id":"0|com.whatsapp|1|t|1","appName":"WhatsApp","isClearable":true,"silent":false,"time":"1700000000000","actions":["Reply","Mute"],"conversation":[{"sender":"A","content":"hi"}]},"payloadSize":4096,"payloadTransferInfo":{"port":1739}}"#,
+        #"{"id":5,"type":"kdeconnect.battery","body":{"currentCharge":42,"isCharging":true,"thresholdEvent":0}}"#,
+        #"{"id":6,"type":"kdeconnect.sms.messages","body":{"messages":[{"_id":9,"thread_id":3,"date":1700000000000,"type":2,"read":1,"body":"ok","addresses":[{"address":"+1"}]}],"version":2}}"#,
+    ]
+
+    @Test func readsPacketsAsCodableDid() throws {
+        for json in samples {
+            let fast = try NetworkPacket.unserialize(from: Data(json.utf8))
+            let codable = try JSONDecoder().decode(NetworkPacket.self, from: Data(json.utf8))
+            #expect(fast.type == codable.type)
+            #expect(fast.payloadSize == codable.payloadSize)
+            #expect(fast.payloadPort == codable.payloadPort)
+            for key in fast.body.keys {
+                #expect(fast.string(for: key) == codable.string(for: key))
+                #expect(fast.int64(for: key) == codable.int64(for: key))
+                #expect(fast.bool(for: key) == codable.bool(for: key))
+                #expect(fast.stringArray(for: key) == codable.stringArray(for: key))
+                #expect(fast.objectArray(for: key).count == codable.objectArray(for: key).count)
+            }
+        }
+    }
+
+    @Test func acceptsAnIDSentAsText() throws {
+        #expect(try NetworkPacket.unserialize(from: Data(#"{"id":"6","type":"x","body":{}}"#.utf8)).id == 6)
+    }
+
+    @Test func rejectsPacketsWithoutTheirFields() {
+        #expect(throws: (any Error).self) { try NetworkPacket.unserialize(from: Data(#"{"type":"x","body":{}}"#.utf8)) }
+        #expect(throws: (any Error).self) { try NetworkPacket.unserialize(from: Data(#"[1,2]"#.utf8)) }
+    }
+}

@@ -72,10 +72,15 @@ final class SettingsViewModel {
         reloadPairedDevices()
     }
 
-    func setSync(deviceId: String, clipboard: Bool, notifications: Bool) {
-        guard !isMockMode else { return }
-        TrustStore.shared.updateSettings(deviceId: deviceId, clipboard: clipboard, notifications: notifications)
-        reloadPairedDevices()
+    func binding(_ setting: WritableKeyPath<PairedDevice, Bool>, for device: PairedDevice) -> Binding<Bool> {
+        Binding(
+            get: { device[keyPath: setting] },
+            set: { value in
+                guard !self.isMockMode else { return }
+                TrustStore.shared.updateSetting(deviceId: device.deviceId, setting, to: value)
+                self.reloadPairedDevices()
+            }
+        )
     }
 
     /// Port the TCP listener actually bound, which peers dial back on.

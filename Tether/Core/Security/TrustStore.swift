@@ -102,11 +102,10 @@ final class TrustStore: ObservableObject, @unchecked Sendable {
         }
     }
 
-    func updateSettings(deviceId: String, clipboard: Bool, notifications: Bool) {
+    func updateSetting(deviceId: String, _ setting: WritableKeyPath<PairedDevice, Bool>, to value: Bool) {
         lock.withLock {
             guard var device = self.pairedDevices[deviceId] else { return }
-            device.isClipboardSyncEnabled = clipboard
-            device.isNotificationSyncEnabled = notifications
+            device[keyPath: setting] = value
             self.pairedDevices[deviceId] = device
             self.saveDevices()
         }

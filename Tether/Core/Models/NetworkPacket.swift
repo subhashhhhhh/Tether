@@ -252,8 +252,29 @@ nonisolated struct NetworkPacket: Codable, Sendable {
         return data
     }
 
+    struct MalformedPacket: Error {}
+
+    /// Reads a packet with JSONSerialization, which parses each value once
+    /// at its real type. Decoding through Codable tried every value as each
+    /// type in turn, throwing on each miss, at every level: the costliest
+    /// thing Tether did while a phone synced its messages.
     static func unserialize(from data: Data) throws -> NetworkPacket {
-        let decoder = JSONDecoder()
-        return try decoder.decode(NetworkPacket.self, from: data)
+        guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let type = object["type"] as? String,
+              let body = object["body"] as? [String: Any],
+              let id = integer(object["id"]) else { throw MalformedPacket() }
+        var packet = NetworkPacket(type: type, body: body,
+                                   payloadSize: integer(object["payloadSize"]),
+                                   payloadTransferInfo: object["payloadTransferInfo"] as? [String: Any])
+        packet.id = id
+        return packet
+    }
+
+    private static func integer(_ value: Any?) -> Int64? {
+        switch value {
+        case let number as NSNumber: number.int64Value
+        case let string as String: Int64(string)
+        default: nil
+        }
     }
 }

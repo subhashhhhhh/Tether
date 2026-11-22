@@ -323,7 +323,12 @@ final class TetherAppModel {
             // Sorted only when texts changed: this runs on every plugin change.
             if smsRevisionSeen[ObjectIdentifier(dev)] != service.smsPlugin.revision {
                 smsRevisionSeen[ObjectIdentifier(dev)] = service.smsPlugin.revision
-                let threads = (service.smsPlugin.conversations[id] ?? [:]).values.sorted { $0.lastDate > $1.lastDate }
+                // Each thread's date is read once, not in every comparison:
+                // a phone can have thousands of conversations.
+                let threads = (service.smsPlugin.conversations[id] ?? [:]).values
+                    .map { (date: $0.lastDate, thread: $0) }
+                    .sorted { $0.date > $1.date }
+                    .map(\.thread)
                 update(dev, \.smsThreads, threads)
                 update(dev, \.unreadMessageCount, threads.reduce(0) { $0 + $1.unreadCount })
             }

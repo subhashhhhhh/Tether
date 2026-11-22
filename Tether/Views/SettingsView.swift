@@ -362,14 +362,11 @@ private struct DevicesSettings: View {
 
             ForEach(viewModel.pairedDevices) { device in
                 Section {
-                    Toggle("Share clipboard", isOn: Binding(
-                        get: { device.isClipboardSyncEnabled },
-                        set: { viewModel.setSync(deviceId: device.deviceId, clipboard: $0, notifications: device.isNotificationSyncEnabled) }
-                    ))
-                    Toggle("Show phone notifications", isOn: Binding(
-                        get: { device.isNotificationSyncEnabled },
-                        set: { viewModel.setSync(deviceId: device.deviceId, clipboard: device.isClipboardSyncEnabled, notifications: $0) }
-                    ))
+                    Toggle(isOn: viewModel.binding(\.isClipboardSyncEnabled, for: device)) {
+                        Text("Send copies to \(device.deviceName) automatically")
+                        Text("When off, use Send Clipboard to send what you copied. What the phone sends always arrives.")
+                    }
+                    Toggle("Show phone notifications", isOn: viewModel.binding(\.isNotificationSyncEnabled, for: device))
                     LabeledContent("Paired", value: device.pairedDate.formatted(date: .abbreviated, time: .omitted))
                     if let lastSeen = device.lastSeenDate {
                         LabeledContent("Last connected", value: lastSeen.formatted(.relative(presentation: .named)))
