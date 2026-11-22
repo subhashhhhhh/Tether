@@ -121,7 +121,6 @@ struct MainWindowView: View {
             )
         }
         .onAppear {
-            appModel.checkNotificationStatus()
             applySectionRequest()
             DockPresence.windowOpened()
         }
@@ -147,8 +146,23 @@ struct MainWindowView: View {
         }
     }
 
-    @ViewBuilder
     private var detail: some View {
+        VStack(spacing: 0) {
+            // Without it no phone can be found or reached. The first-run page
+            // says so itself.
+            if Permissions.shared.localNetwork == .off, !appModel.allDevices.isEmpty {
+                PermissionBanner(
+                    systemImage: "network.slash",
+                    message: "Local Network access is off for Tether, so it can't find or reach your phone on Wi-Fi.",
+                    action: Permissions.shared.openLocalNetworkSettings
+                )
+            }
+            detailContent
+        }
+    }
+
+    @ViewBuilder
+    private var detailContent: some View {
         if let selection, let device = appModel.allDevices.first(where: { $0.id == selection.deviceId }) {
             DeviceDetailView(
                 device: device,

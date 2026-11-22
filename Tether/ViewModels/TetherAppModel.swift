@@ -42,11 +42,6 @@ final class TetherAppModel {
     /// Set by the menu bar popover; the main window shows it and clears it.
     var sectionRequest: SectionRequest?
     var isRunning: Bool = false
-    var notificationAuthStatus: UNAuthorizationStatus = .authorized
-
-    var isNotificationPermissionDenied: Bool {
-        notificationAuthStatus == .denied
-    }
 
     @ObservationIgnored private var cancellables = Set<AnyCancellable>()
     @ObservationIgnored private var deviceCache: [String: DeviceViewModel] = [:]
@@ -81,7 +76,6 @@ final class TetherAppModel {
         if !isMock {
             setupLiveSubscriptions()
             rebuildDeviceLists()
-            checkNotificationStatus()
         }
     }
 
@@ -394,7 +388,7 @@ final class TetherAppModel {
     func refreshDiscovery(thorough: Bool = true) {
         guard !isMockMode else { return }
         TetherService.shared.refreshDiscovery(thorough: thorough)
-        checkNotificationStatus()
+        Permissions.shared.refresh()
     }
 
     /// Adds a device by IPv4 address or host name; false if the name doesn't resolve.
@@ -403,20 +397,6 @@ final class TetherAppModel {
         return await TetherService.shared.addManualPeer(address: address)
     }
 
-    func checkNotificationStatus() {
-        guard !isMockMode else { return }
-        UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
-            DispatchQueue.main.async {
-                self?.notificationAuthStatus = settings.authorizationStatus
-            }
-        }
-    }
-
-    func openNotificationSettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
-            NSWorkspace.shared.open(url)
-        }
-    }
 }
 
 #if DEBUG

@@ -35,20 +35,10 @@ final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin, UNUser
         super.init()
         setupNotificationCategories()
         UNUserNotificationCenter.current().delegate = self
-        requestPermission()
         // "Show phone notifications" can change while the phone is connected.
         settingsObserver = TrustStore.shared.objectWillChange
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in self?.applySyncSettings() }
-    }
-
-    private func requestPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
-            TetherLog("[NotificationPlugin] Notification authorization granted: \(granted)\(error != nil ? ", error: \(error!)" : "")")
-        }
-        UNUserNotificationCenter.current().getNotificationSettings { settings in
-            TetherLog("[NotificationPlugin] Current notification authorization status: \(settings.authorizationStatus.rawValue) (0=notDetermined, 1=denied, 2=authorized, 3=provisional)")
-        }
     }
 
     private func setupNotificationCategories() {
@@ -165,7 +155,12 @@ final class NotificationPlugin: NSObject, ObservableObject, TetherPlugin, UNUser
         // a reconnect.
         activeConnections[deviceId] = connection
         loadGlyphsIfNeeded(for: deviceId)
-        if paired.isNotificationSyncEnabled { startSync(deviceId: deviceId, connection: connection) }
+        if paired.isNotificationSyncEnabled {
+            startSync(deviceId: deviceId, connection: connection)
+            // Asked now rather than at launch: there's a phone whose
+            // notifications it's for.
+            Task { @MainActor in Permissions.shared.askForNotificationsIfNeeded() }
+        }
     }
 
     /// The phone keeps showing what it showed; only the connection moves.

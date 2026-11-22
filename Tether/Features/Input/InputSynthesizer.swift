@@ -72,13 +72,6 @@ nonisolated final class InputSynthesizer: @unchecked Sendable {
         AXIsProcessTrusted()
     }
 
-    /// Opens System Settings -> Privacy & Security -> Accessibility
-    func openAccessibilitySettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-            NSWorkspace.shared.open(url)
-        }
-    }
-
     /// Handles a kdeconnect.mousepad.request packet and synthesizes events.
     @discardableResult
     func handlePacket(_ packet: NetworkPacket) -> Bool {

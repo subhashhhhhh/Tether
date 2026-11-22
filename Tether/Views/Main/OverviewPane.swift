@@ -386,12 +386,9 @@ private struct NotificationPreviewRow: View {
 
 /// Shown only while Accessibility access is missing; once granted there's nothing to say.
 private struct RemoteInputRow: View {
-    @State private var isTrusted = InputSynthesizer.shared.isAccessibilityTrusted
-    @Environment(\.appearsActive) private var appearsActive
-
     var body: some View {
         Group {
-            if !isTrusted {
+            if Permissions.shared.accessibility == .off {
                 HStack(spacing: 14) {
                     Image(systemName: "cursorarrow.motionlines")
                         .font(.title2)
@@ -406,15 +403,11 @@ private struct RemoteInputRow: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 8)
-                    Button("Allow…") { InputSynthesizer.shared.openAccessibilitySettings() }
+                    Button("Allow…") { Permissions.shared.turnOnAccessibility() }
                 }
                 .padding(16)
                 .contentCard()
             }
-        }
-        // Re-check when the window regains focus, e.g. after visiting System Settings.
-        .onChange(of: appearsActive) {
-            isTrusted = InputSynthesizer.shared.isAccessibilityTrusted
         }
     }
 }

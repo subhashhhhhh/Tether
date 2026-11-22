@@ -22,8 +22,6 @@ final class SettingsViewModel {
     var certificateFingerprint: String = DeviceIdentity.shared.certificateFingerprint
     var pairedDevices: [PairedDevice] = []
     var launchAtLogin: Bool = false
-    var notificationAuthStatus: UNAuthorizationStatus = .notDetermined
-    var isAccessibilityTrusted: Bool = false
     var tailscaleStatus: TailscaleStatus = .notInstalled
     var isTailscaleDiscoveryEnabled: Bool = TailscaleDiscovery.isEnabled {
         didSet {
@@ -53,9 +51,7 @@ final class SettingsViewModel {
         self.deviceId = DeviceIdentity.shared.deviceId
         self.certificateFingerprint = DeviceIdentity.shared.certificateFingerprint
         reloadPairedDevices()
-        self.isAccessibilityTrusted = AXIsProcessTrusted()
         self.checkLaunchAtLoginStatus()
-        self.refreshNotificationStatus()
     }
 
     func saveDeviceName(_ newName: String) {
@@ -115,42 +111,6 @@ final class SettingsViewModel {
         }
     }
 
-    func refreshNotificationStatus() {
-        UNUserNotificationCenter.current().getNotificationSettings { [weak self] settings in
-            DispatchQueue.main.async {
-                self?.notificationAuthStatus = settings.authorizationStatus
-            }
-        }
-    }
-
-    func requestNotificationPermission() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { [weak self] granted, _ in
-            DispatchQueue.main.async {
-                self?.refreshNotificationStatus()
-            }
-        }
-    }
-
-    func openNotificationSettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
-            NSWorkspace.shared.open(url)
-        }
-    }
-
-    func promptAccessibility() {
-        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
-        _ = AXIsProcessTrustedWithOptions(options)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            self?.isAccessibilityTrusted = AXIsProcessTrusted()
-        }
-    }
-
-    func openAccessibilitySettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-            NSWorkspace.shared.open(url)
-        }
-    }
-
     // MARK: - Mocks for Previews
 
     #if DEBUG
@@ -172,15 +132,6 @@ final class SettingsViewModel {
         vm.tailscaleStatus = .running(selfIP: "100.101.42.7", phones: [
             TailscalePeer(name: "Pixel 9 Pro", ip: "100.88.17.53", os: "android")
         ])
-        vm.notificationAuthStatus = .authorized
-        vm.isAccessibilityTrusted = true
-        return vm
-    }
-
-    static func mockDenied() -> SettingsViewModel {
-        let vm = SettingsViewModel.mock()
-        vm.notificationAuthStatus = .denied
-        vm.isAccessibilityTrusted = false
         return vm
     }
     #endif

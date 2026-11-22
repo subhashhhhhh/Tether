@@ -389,39 +389,24 @@ private struct DevicesSettings: View {
 
 // MARK: - Permissions
 
-private struct PermissionsSettings: View {
+struct PermissionsSettings: View {
     @Bindable var viewModel: SettingsViewModel
-    @Environment(\.appearsActive) private var appearsActive
 
     var body: some View {
         Form {
             Section {
-                PermissionRow(
-                    title: "Notifications",
-                    detail: "Show phone notifications and let you reply from banners.",
-                    systemImage: "bell.badge",
-                    state: notificationState
-                ) {
-                    if viewModel.notificationAuthStatus == .notDetermined {
-                        Button("Allow") { viewModel.requestNotificationPermission() }
-                    } else {
-                        Button("Open Settings…") { viewModel.openNotificationSettings() }
-                    }
-                }
-
-                PermissionRow(
-                    title: "Accessibility",
-                    detail: "Let your phone move the pointer, type and click as a remote trackpad and presenter.",
-                    systemImage: "cursorarrow.motionlines",
-                    state: viewModel.isAccessibilityTrusted ? .granted : .needed
-                ) {
-                    if !viewModel.isAccessibilityTrusted {
-                        Button("Allow…") { viewModel.promptAccessibility() }
-                    }
-                }
+                MacPermissionRows()
+            } header: {
+                Text("This Mac")
             } footer: {
                 Text("Tether talks to your devices directly, over your local network or Tailscale. Nothing is sent to a server.")
                     .foregroundStyle(.secondary)
+            }
+
+            ForEach(viewModel.pairedDevices) { device in
+                Section("On \(device.deviceName)") {
+                    PhoneFileAccessRow(deviceId: device.deviceId, deviceName: device.deviceName)
+                }
             }
 
             Section("Presenter") {
@@ -433,25 +418,100 @@ private struct PermissionsSettings: View {
             }
         }
         .formStyle(.grouped)
-        .onChange(of: appearsActive) { viewModel.refresh() }
+    }
+}
+
+/// Whether KDE Connect on the phone lets Tether see its storage. Android
+/// asks for this on the phone, so all Tether can do is say where.
+private struct PhoneFileAccessRow: View {
+    let deviceId: String
+    let deviceName: String
+
+    var body: some View {
+        let state = PhoneFilesController.shared.driveState(for: deviceId)
+        PermissionRow(title: "Files", detail: detail(state), systemImage: "folder", status: status(state)) {
+            EmptyView()
+        }
     }
 
-    private var notificationState: PermissionState {
-        switch viewModel.notificationAuthStatus {
-        case .authorized, .provisional, .ephemeral: .granted
-        case .denied: .denied
-        default: .needed
+    private func status(_ state: PhoneFilesController.DriveState) -> Permissions.Status {
+        switch state {
+        case .mounted: .allowed
+        case .failed(let message) where Self.isPermissionError(message): .off
+        default: .unknown
+        }
+    }
+
+    private func detail(_ state: PhoneFilesController.DriveState) -> String {
+        switch state {
+        case .failed(let message) where Self.isPermissionError(message):
+            "KDE Connect on \(deviceName) isn't allowed to share its storage. On the phone, open Settings › Apps › Special app access › All files access, and turn on KDE Connect."
+        case .failed(let message):
+            "The phone drive couldn't start: \(message)"
+        case .turnedOff:
+            "The phone drive is off. Turn it on in the Files tab."
+        case .notConnected, .ejected:
+            "Shows \(deviceName) in Finder as a drive. Checked when the phone connects."
+        case .mounting:
+            "Checking…"
+        case .mounted:
+            "\(deviceName) shares its storage, and shows in Finder as a drive."
+        }
+    }
+
+    static func isPermissionError(_ message: String) -> Bool {
+        message.localizedCaseInsensitiveContains("permission")
+    }
+}
+
+/// Local Network, Notifications and Accessibility: each with what it's for,
+/// whether it's on, and the one button that turns it on.
+struct MacPermissionRows: View {
+    private let permissions = Permissions.shared
+
+    var body: some View {
+        PermissionRow(
+            title: "Local Network",
+            detail: "Find your phone and connect to it on Wi-Fi. Tether can't work without it.",
+            systemImage: "network",
+            status: permissions.localNetwork
+        ) {
+            if permissions.localNetwork == .off {
+                Button("Open Settings…") { permissions.openLocalNetworkSettings() }
+            }
+        }
+
+        PermissionRow(
+            title: "Notifications",
+            detail: "Show phone notifications and let you reply from banners.",
+            systemImage: "bell.badge",
+            status: permissions.notifications
+        ) {
+            switch permissions.notifications {
+            case .notAsked: Button("Allow") { permissions.turnOnNotifications() }
+            case .off: Button("Open Settings…") { permissions.turnOnNotifications() }
+            default: EmptyView()
+            }
+        }
+
+        PermissionRow(
+            title: "Accessibility",
+            detail: "Let your phone move the pointer, type and click as a remote trackpad and presenter. Optional.",
+            systemImage: "cursorarrow.motionlines",
+            status: permissions.accessibility
+        ) {
+            if permissions.accessibility != .allowed {
+                Button("Allow…") { permissions.turnOnAccessibility() }
+            }
         }
     }
 }
 
-private enum PermissionState { case granted, needed, denied }
-
-private struct PermissionRow<Action: View>: View {
+struct PermissionRow<Action: View>: View {
     let title: String
     let detail: String
     let systemImage: String
-    let state: PermissionState
+    let status: Permissions.Status
     @ViewBuilder var action: Action
 
     var body: some View {
@@ -460,10 +520,11 @@ private struct PermissionRow<Action: View>: View {
                 .font(.title3)
                 .foregroundStyle(.tint)
                 .frame(width: 26)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(title)
-                    statusBadge
+                    statusLabel
                 }
                 Text(detail)
                     .font(.callout)
@@ -474,17 +535,22 @@ private struct PermissionRow<Action: View>: View {
             action
         }
         .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder
-    private var statusBadge: some View {
-        switch state {
-        case .granted:
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).accessibilityLabel("Allowed")
-        case .denied:
+    private var statusLabel: some View {
+        switch status {
+        case .allowed:
+            Label("Allowed", systemImage: "checkmark.circle.fill")
+                .labelStyle(.iconOnly)
+                .foregroundStyle(.green)
+        case .off:
             Text("Off").font(.caption.weight(.medium)).foregroundStyle(.orange)
-        case .needed:
-            Text("Not allowed").font(.caption.weight(.medium)).foregroundStyle(.secondary)
+        case .notAsked:
+            Text("Not asked yet").font(.caption.weight(.medium)).foregroundStyle(.secondary)
+        case .unknown:
+            EmptyView()
         }
     }
 }
@@ -492,10 +558,6 @@ private struct PermissionRow<Action: View>: View {
 #if DEBUG
 #Preview("Settings") {
     SettingsView(viewModel: .mock())
-}
-
-#Preview("Permissions needed") {
-    SettingsView(viewModel: .mockDenied())
 }
 
 #Preview("About") {

@@ -70,8 +70,9 @@ import ScreenCaptureKit
                          to: dir.appendingPathComponent("settings-light.png"))
         let release = AvailableRelease(
             version: AppVersion("1.6")!, tag: "v1.6",
-            notes: ReleaseFeed.changelog(from: try String(contentsOfFile: #filePath.replacingOccurrences(
-                of: "TetherTests/UISnapshots.swift", with: "dist/notes-1.5.md"), encoding: .utf8)),
+            // Release notes are written into dist/ only while releasing.
+            notes: ReleaseFeed.changelog(from: (try? String(contentsOfFile: #filePath.replacingOccurrences(
+                of: "TetherTests/UISnapshots.swift", with: "dist/notes-1.5.md"), encoding: .utf8)) ?? ""),
             pageURL: ReleaseFeed.releasesPage, archiveURL: ReleaseFeed.releasesPage,
             archiveSize: 2_900_000, archiveSHA256: nil)
         let updateStates: [(String, UpdateController.State)] = [
@@ -88,6 +89,16 @@ import ScreenCaptureKit
 
         try await render(FilesSettings(viewModel: .mock()), size: CGSize(width: 560, height: 460), dark: false,
                          to: dir.appendingPathComponent("files-settings-light.png"))
+
+        // This Mac's real permissions: give the system a moment to answer.
+        _ = Permissions.shared
+        try await Task.sleep(for: .seconds(2))
+        for dark in [false, true] {
+            try await render(PermissionsSettings(viewModel: .mock()), size: CGSize(width: 560, height: 560), dark: dark,
+                             to: dir.appendingPathComponent("permissions-\(dark ? "dark" : "light").png"))
+        }
+        try await render(OnboardingView(appModel: .mock(), onConnectByIP: {}), size: CGSize(width: 760, height: 640), dark: false,
+                         to: dir.appendingPathComponent("first-run-light.png"))
 
         for dark in [false, true] {
             try await render(RingingView(deviceName: "Pixel 9 Pro") {}, size: CGSize(width: 340, height: 230), dark: dark,
