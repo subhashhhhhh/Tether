@@ -33,10 +33,13 @@ final class PhoneNowPlaying {
         subscription = service.mediaControlPlugin.objectWillChange
             .throttle(for: .milliseconds(200), scheduler: DispatchQueue.main, latest: true)
             .sink { [weak self] _ in self?.update() }
+        // Not queue: .main: a change made on another thread would then wait
+        // for the main thread, and freeze the app if the main thread waited
+        // on that thread.
         settingObserver = NotificationCenter.default.addObserver(
-            forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+            forName: UserDefaults.didChangeNotification, object: nil, queue: nil
         ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.update() }
+            Task { @MainActor in self?.update() }
         }
     }
 

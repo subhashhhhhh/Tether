@@ -30,7 +30,7 @@ final class TrustStore: ObservableObject, @unchecked Sendable {
 
         // Persist when migrating from the legacy key or when a preloaded entry was dropped.
         if kept.count != stored.count || UserDefaults.standard.data(forKey: userDefaultsKey) == nil {
-            saveDevices()
+            write(encodedDevices())
         }
     }
 
@@ -48,12 +48,31 @@ final class TrustStore: ObservableObject, @unchecked Sendable {
         }
     }
 
-    private func saveDevices() {
-        let list = Array(pairedDevices.values)
-        if let data = try? JSONEncoder().encode(list) {
-            UserDefaults.standard.set(data, forKey: userDefaultsKey)
+    /// Encodes under the lock; call `write(_:)` with the result after
+    /// releasing it. Writing defaults posts a notification that waits on
+    /// observers, some on the main thread, and the main thread takes this
+    /// lock: writing while holding it froze the app.
+    private func encodedDevices() -> Snapshot? {
+        guard let data = try? JSONEncoder().encode(Array(pairedDevices.values)) else { return nil }
+        snapshotCount += 1
+        return Snapshot(number: snapshotCount, data: data)
+    }
+
+    /// Two saves on different threads can reach here in either order; the
+    /// older one is skipped.
+    private func write(_ snapshot: Snapshot?) {
+        guard let snapshot else { return }
+        writeLock.withLock {
+            guard snapshot.number > lastWritten else { return }
+            lastWritten = snapshot.number
+            UserDefaults.standard.set(snapshot.data, forKey: userDefaultsKey)
         }
     }
+
+    private struct Snapshot { let number: Int; let data: Data }
+    private var snapshotCount = 0
+    private var lastWritten = 0
+    private let writeLock = NSLock()
 
     func isTrusted(deviceId: String) -> Bool {
         lock.withLock {
@@ -68,10 +87,11 @@ final class TrustStore: ObservableObject, @unchecked Sendable {
     }
 
     func add(device: PairedDevice) {
-        lock.withLock {
+        let data = lock.withLock { () -> Snapshot? in
             self.pairedDevices[device.deviceId] = device
-            self.saveDevices()
+            return self.encodedDevices()
         }
+        write(data)
         DispatchQueue.main.async {
             self.objectWillChange.send()
         }
@@ -79,36 +99,39 @@ final class TrustStore: ObservableObject, @unchecked Sendable {
 
     /// Forgets a paired device. `reason` is logged so a lost pairing can always be traced.
     func remove(deviceId: String, reason: String) {
-        lock.withLock {
+        let data = lock.withLock { () -> Snapshot? in
             let name = self.pairedDevices[deviceId]?.deviceName ?? "unknown"
             TetherLog("[TrustStore] Removing \(name) (\(deviceId)): \(reason)")
             self.pairedDevices.removeValue(forKey: deviceId)
-            self.saveDevices()
+            return self.encodedDevices()
         }
+        write(data)
         DispatchQueue.main.async {
             self.objectWillChange.send()
         }
     }
 
     func updateLastSeen(deviceId: String) {
-        lock.withLock {
-            guard var device = self.pairedDevices[deviceId] else { return }
+        let data = lock.withLock { () -> Snapshot? in
+            guard var device = self.pairedDevices[deviceId] else { return nil }
             device.lastSeenDate = Date()
             self.pairedDevices[deviceId] = device
-            self.saveDevices()
+            return self.encodedDevices()
         }
+        write(data)
         DispatchQueue.main.async {
             self.objectWillChange.send()
         }
     }
 
     func updateSetting(deviceId: String, _ setting: WritableKeyPath<PairedDevice, Bool>, to value: Bool) {
-        lock.withLock {
-            guard var device = self.pairedDevices[deviceId] else { return }
+        let data = lock.withLock { () -> Snapshot? in
+            guard var device = self.pairedDevices[deviceId] else { return nil }
             device[keyPath: setting] = value
             self.pairedDevices[deviceId] = device
-            self.saveDevices()
+            return self.encodedDevices()
         }
+        write(data)
         DispatchQueue.main.async {
             self.objectWillChange.send()
         }
