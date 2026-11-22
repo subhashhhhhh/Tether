@@ -47,6 +47,10 @@ nonisolated final class NowPlayingReader: @unchecked Sendable {
 
     private let queue = DispatchQueue(label: "com.subhashh.tether.nowplaying")
     private var process: Process?
+    /// The reader's standard input. Nothing is written to it; it reaches end
+    /// of file when Tether exits, however it exits, which stops the reader.
+    /// Without it a reader outlived a force-quit or crash, one per launch.
+    private let lifeline = Pipe()
     private var buffer = Data()
     private var wanted = false
     private var failures = 0
@@ -112,7 +116,9 @@ nonisolated final class NowPlayingReader: @unchecked Sendable {
         guard wanted, process == nil, let script, let framework else { return }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/perl")
-        process.arguments = [script.path, framework.path, "stream", "--no-diff", "--no-artwork", "--debounce=200"]
+        process.arguments = ["-e", Self.lifelineWrapper,
+                             script.path, framework.path, "stream", "--no-diff", "--no-artwork", "--debounce=200"]
+        process.standardInput = lifeline
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
@@ -146,6 +152,19 @@ nonisolated final class NowPlayingReader: @unchecked Sendable {
             TetherLog("[NowPlaying] Couldn't start the Now Playing reader: \(error.localizedDescription)")
         }
     }
+
+    /// Runs the adapter as a child and waits on standard input. The adapter
+    /// blocks in MediaRemote and never notices Tether has gone, so this stops
+    /// it on end of file, on terminate(), and exits when it does.
+    private static let lifelineWrapper = #"""
+    my $pid = fork() // exit 1;
+    if ($pid == 0) { exec('/usr/bin/perl', @ARGV) or exit 1; }
+    $SIG{TERM} = sub { kill 'TERM', $pid; exit 0 };
+    $SIG{CHLD} = sub { exit 0 };
+    1 while sysread(STDIN, my $byte, 1);
+    kill 'TERM', $pid;
+    exit 0;
+    """#
 
     private func consume(_ data: Data) {
         guard !data.isEmpty else { return }
