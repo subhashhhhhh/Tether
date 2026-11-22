@@ -43,6 +43,7 @@ struct TetherApp: App {
         // phone drive as a "leftover".
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil { return }
 
+        QuitOnTerminateSignal.install()
         // Eagerly initialize identity on main thread
         _ = DeviceIdentity.shared
         // Start background discovery and network services

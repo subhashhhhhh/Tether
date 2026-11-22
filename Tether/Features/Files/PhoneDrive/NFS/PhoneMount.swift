@@ -33,6 +33,22 @@ final class PhoneMount {
     let mountPoint: URL
     private let server: PhoneNFSServer
     private var hostName: LocalHostName?
+    private var watcher: Process?
+
+    /// Read by every drive's watcher. Nothing is written; it reaches end of
+    /// file when Tether exits, however it exits.
+    private static let lifeline = Pipe()
+
+    /// Unmounts the drive once Tether has gone. After a crash or force-quit
+    /// its server is gone with it, and macOS would show "Server connections
+    /// interrupted" until the drive was ejected by hand. A clean quit or an
+    /// eject stops the watcher first.
+    private static let watcherScript = """
+    trap 'exit 0' TERM
+    while read -r _; do :; done
+    /sbin/umount "$1" 2>/dev/null || /sbin/umount -f "$1"
+    /bin/rmdir "$1"
+    """
 
     /// Where phones are mounted. Kept out of the way; Finder lists the drives by name.
     static var mountsDirectory: URL {
@@ -71,11 +87,33 @@ final class PhoneMount {
             throw MountError.mountFailed(result.output.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         TetherLog("[Files] Mounted \(name) from \(serverName) port \(port)")
+        startWatcher()
+    }
+
+    private func startWatcher() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/sh")
+        process.arguments = ["-c", Self.watcherScript, "sh", mountPoint.standardizedFileURL.path]
+        process.standardInput = Self.lifeline
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+            watcher = process
+        } catch {
+            TetherLog("[Files] Couldn't start the drive watcher: \(error.localizedDescription)")
+        }
+    }
+
+    private func stopWatcher() {
+        watcher?.terminate()
+        watcher = nil
     }
 
     func unmount() async {
         // Off the main thread: a polite unmount waits for the drive to flush,
         // and answering the drive can need the main thread.
+        stopWatcher()
         let mountPoint = mountPoint
         _ = await Task.detached { Self.forceUnmount(mountPoint) }.value
         await server.stop()
@@ -87,6 +125,7 @@ final class PhoneMount {
 
     /// Cleans up after the drive was ejected from outside Tether.
     func stopAfterEject() async {
+        stopWatcher()
         await server.stop()
         hostName?.remove()
         hostName = nil
@@ -95,6 +134,7 @@ final class PhoneMount {
 
     /// Unmounts synchronously, for when Tether is quitting.
     func unmountNow() {
+        stopWatcher()
         Self.forceUnmount(mountPoint)
         hostName?.remove()
         Self.removeMountPoint(mountPoint)
