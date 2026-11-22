@@ -4,15 +4,14 @@
 //
 //  Tether's surface language: Liquid Glass on macOS 26, the system's
 //  translucent materials on macOS 15, same shapes and spacing on both.
-//  Glass is used for things that float over content (panels, round buttons,
-//  status pills), never as a fill for whole screens.
+//  Glass is for things that float over content: the popover's panels, the
+//  call card, buttons. Content in the main window sits on plain cards.
 //
 
 import SwiftUI
 
 enum GlassMetrics {
     static let panelRadius: CGFloat = 20
-    static let cardRadius: CGFloat = 40
 }
 
 extension View {
@@ -28,14 +27,43 @@ extension View {
         }
     }
 
-    /// A text field's capsule: glass on macOS 26, a soft fill before.
+    /// A card in the content layer. Liquid Glass belongs to controls and
+    /// navigation, so content gets a quiet fill instead, like a grouped form.
+    func contentCard(radius: CGFloat = 16) -> some View {
+        background(Color(nsColor: .quaternarySystemFill), in: .rect(cornerRadius: radius, style: .continuous))
+    }
+
+    /// Put on the scroll view itself: no edge effect at the top, for a list
+    /// whose rows should simply pass under a floating control.
     @ViewBuilder
-    func glassCapsule() -> some View {
+    func noTopScrollEdge() -> some View {
         if #available(macOS 26.0, *) {
-            self.glassEffect(.regular, in: .capsule)
+            self.scrollEdgeEffectHidden(true, for: .top)
+        } else {
+            self
+        }
+    }
+
+    /// A text field's capsule: glass on macOS 26, a soft fill before.
+    /// `interactive` makes the glass respond to the pointer, for a capsule
+    /// that is a button.
+    @ViewBuilder
+    func glassCapsule(interactive: Bool = false) -> some View {
+        if #available(macOS 26.0, *) {
+            self.glassEffect(interactive ? .regular.interactive() : .regular, in: .capsule)
         } else {
             self
                 .background(.quaternary.opacity(0.7), in: .capsule)
+        }
+    }
+
+    /// A round control's glass, at exactly the view's size.
+    @ViewBuilder
+    func glassCircle() -> some View {
+        if #available(macOS 26.0, *) {
+            self.glassEffect(.regular.interactive(), in: .circle)
+        } else {
+            self.background(.regularMaterial, in: .circle)
         }
     }
 
@@ -49,15 +77,6 @@ extension View {
         }
     }
 
-    /// Glass over imagery (the phone card), where the material should stay clear.
-    @ViewBuilder
-    func clearGlass(in shape: some Shape) -> some View {
-        if #available(macOS 26.0, *) {
-            self.glassEffect(.clear, in: shape)
-        } else {
-            self.background(.ultraThinMaterial, in: shape)
-        }
-    }
 }
 
 /// A round glass button with a symbol, and optionally a caption under it.
@@ -75,7 +94,6 @@ struct GlassCircleButton: View {
             if showsTitle {
                 Text(title)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .fixedSize()
             }
@@ -85,8 +103,8 @@ struct GlassCircleButton: View {
 
     @ViewBuilder
     private var button: some View {
+        // Full contrast: a dimmed glyph and caption read as a disabled control.
         let label = Image(systemName: systemImage)
-            .symbolRenderingMode(.hierarchical)
             .font(.system(size: size * 0.38, weight: .medium))
             .frame(width: size, height: size)
             .contentShape(.circle)
@@ -112,7 +130,84 @@ struct GlassCircleButton: View {
     }
 }
 
-/// A small capsule saying how a device is connected.
+/// The fill behind one row of a group in a list, so a run of rows reads as
+/// one card: rounded at the top of the first and the bottom of the last. A
+/// list is used where rows swipe; this keeps the grouping a card would give.
+struct GroupCardBackground: View {
+    let isFirst: Bool
+    let isLast: Bool
+    /// The column the card keeps to, and its margin in a narrow window.
+    var maxWidth: CGFloat = 680
+    var margin: CGFloat = 16
+
+    var body: some View {
+        UnevenRoundedRectangle(
+            topLeadingRadius: isFirst ? 16 : 0, bottomLeadingRadius: isLast ? 16 : 0,
+            bottomTrailingRadius: isLast ? 16 : 0, topTrailingRadius: isFirst ? 16 : 0,
+            style: .continuous
+        )
+        .fill(Color(nsColor: .quaternarySystemFill))
+        .frame(maxWidth: maxWidth)
+        .padding(.horizontal, margin)
+        .frame(maxWidth: .infinity)
+    }
+}
+
+/// A bar floating over a scroll view. It has no background at rest: what
+/// scrolls behind shows through untouched. While the pointer is over it, it
+/// takes the bar material with a hairline at its inner edge, as Messages'
+/// header does: a clean band, not a fade.
+struct HoverBlurBar<Content: View>: View {
+    let edge: VerticalEdge
+    @ViewBuilder var content: Content
+    @State private var isHovering = false
+
+    var body: some View {
+        content
+            .frame(maxWidth: .infinity)
+            .background {
+                Rectangle()
+                    .fill(.bar)
+                    .overlay(alignment: edge == .top ? .bottom : .top) { Divider() }
+                    .opacity(isHovering ? 1 : 0)
+                    .allowsHitTesting(false)
+            }
+            .onHover { isHovering = $0 }
+            .animation(.easeOut(duration: 0.18), value: isHovering)
+    }
+}
+
+extension View {
+    /// A list of cards kept to a readable width in a wide window. A list
+    /// draws a row's swipe buttons at the row's edge, so the list itself is
+    /// narrowed, which keeps Dismiss right behind a card. A swiped card can
+    /// still slide past the list's edge, and the list's own scroll bar,
+    /// which would sit mid-window, is hidden.
+    func readableCardList(maxWidth: CGFloat = 760) -> some View {
+        scrollClipDisabled()
+            .scrollIndicators(.hidden)
+            .frame(maxWidth: maxWidth)
+            .frame(maxWidth: .infinity)
+    }
+}
+
+/// Glass controls that sit together share one container, so they render as
+/// a set and can blend into each other.
+struct GlassGroup<Content: View>: View {
+    var spacing: CGFloat = 10
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        if #available(macOS 26.0, *) {
+            GlassEffectContainer(spacing: spacing) { content }
+        } else {
+            content
+        }
+    }
+}
+
+/// How a device is doing: its connection, battery or network. It's
+/// information, not a control, so it's plain text with no capsule behind it.
 struct StatusPill: View {
     let text: String
     let systemImage: String
@@ -121,19 +216,17 @@ struct StatusPill: View {
     var body: some View {
         Label {
             Text(text)
+                .foregroundStyle(.secondary)
         } icon: {
             Image(systemName: systemImage)
                 .foregroundStyle(tint)
                 .contentTransition(.symbolEffect(.replace))
         }
-        .font(.callout.weight(.medium))
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .glassPanel(radius: 100)
+        .font(.callout)
     }
 }
 
-/// A section heading over a glass panel.
+/// A section heading over a card.
 struct PanelHeader<Trailing: View>: View {
     let title: String
     @ViewBuilder var trailing: Trailing
@@ -156,48 +249,26 @@ struct PanelHeader<Trailing: View>: View {
 
 // MARK: - Pages
 
-/// A device section laid out like the Overview: a scrolling column with a
-/// title, then glass sections.
-struct GlassPage<Trailing: View, Content: View>: View {
-    let title: String
-    let subtitle: String
-    @ViewBuilder var trailing: Trailing
+/// A device section laid out like the Overview: a scrolling column of
+/// sections. The page's name is the toolbar's title and its actions are
+/// toolbar buttons, so the column starts with content.
+struct GlassPage<Content: View>: View {
     @ViewBuilder var content: Content
-
-    init(_ title: String, subtitle: String,
-         @ViewBuilder trailing: () -> Trailing = { EmptyView() },
-         @ViewBuilder content: () -> Content) {
-        self.title = title
-        self.subtitle = subtitle
-        self.trailing = trailing()
-        self.content = content()
-    }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                HStack(alignment: .firstTextBaseline) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(title)
-                            .font(.title2.weight(.bold))
-                        Text(subtitle)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    trailing
-                }
-                .padding(.horizontal, 4)
                 content
             }
             .frame(maxWidth: 600, alignment: .leading)
             .padding(.horizontal, 32)
-            .padding(.vertical, 28)
+            .padding(.vertical, 20)
             .frame(maxWidth: .infinity)
         }
     }
 }
 
-/// A titled glass panel, with an optional note under it.
+/// A titled card, with an optional note under it.
 struct GlassSection<Trailing: View, Content: View>: View {
     let title: String
     var footer: String?
@@ -217,7 +288,7 @@ struct GlassSection<Trailing: View, Content: View>: View {
         VStack(alignment: .leading, spacing: 10) {
             PanelHeader(title) { trailing }
             VStack(spacing: 0) { content }
-                .glassPanel()
+                .contentCard()
             if let footer {
                 Text(footer)
                     .font(.callout)
@@ -242,11 +313,9 @@ extension View {
 
 private struct StaggeredEntrance: ViewModifier {
     let index: Int
-    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
-    @AppStorage(MotionPreference.key) private var tetherReduceMotion = false
+    @Environment(\.reducesMotion) private var reduceMotion
     @State private var isShown = false
 
-    private var reduceMotion: Bool { systemReduceMotion || tetherReduceMotion }
 
     func body(content: Content) -> some View {
         content
@@ -269,19 +338,5 @@ extension View {
     /// Fades and settles in after the ones before it, e.g. the popover's panels.
     func staggeredEntrance(_ index: Int) -> some View {
         modifier(StaggeredEntrance(index: index))
-    }
-}
-
-enum DeviceSymbols {
-    /// A battery symbol for a level, with a bolt while charging.
-    static func battery(_ percent: Int, charging: Bool) -> String {
-        if charging { return "battery.100percent.bolt" }
-        switch percent {
-        case ..<13: return "battery.0percent"
-        case ..<38: return "battery.25percent"
-        case ..<63: return "battery.50percent"
-        case ..<88: return "battery.75percent"
-        default: return "battery.100percent"
-        }
     }
 }

@@ -12,16 +12,84 @@ import SwiftUI
 struct OverviewPane: View {
     @Bindable var device: DeviceViewModel
     let onSelectSection: (DeviceSection) -> Void
+    /// Set for a while after asking the phone to ring. The phone can't be
+    /// told to stop, and doesn't say when it has; someone taps it.
+    @State private var isRinging = false
 
     var body: some View {
-        ScrollView {
-            details
-                .frame(maxWidth: 600, alignment: .leading)
-                .padding(.horizontal, 32)
-                .padding(.vertical, 28)
-                .frame(maxWidth: .infinity)
+        // A list, so the notifications here swipe away as they do on their
+        // own page. Everything else is a plain row with no separator.
+        List {
+            header
+                .overviewRow(top: 20)
+
+            if device.hasNowPlaying {
+                NowPlayingPanel(device: device)
+                    .overviewRow()
+            }
+
+            if !device.notifications.isEmpty {
+                PanelHeader("Notifications") {
+                    Button("Show All") { onSelectSection(.notifications) }
+                        .buttonStyle(.link)
+                }
+                .overviewRow(bottom: 2)
+
+                let latest = Array(device.notifications.prefix(3))
+                ForEach(Array(latest.enumerated()), id: \.element.id) { index, item in
+                    // No insets: the inset list style keeps the row in from the
+                    // sides, so the row is exactly the card and a swipe
+                    // uncovers Dismiss right at the card's edge.
+                    NotificationPreviewRow(item: item, device: device)
+                        .listRowInsets(EdgeInsets())
+                        .listRowSeparator(.hidden)
+                        // Part of the row, not its background, so a swipe
+                        // moves the whole card.
+                        .background(GroupCardBackground(isFirst: index == 0, isLast: index == latest.count - 1,
+                                                        maxWidth: .infinity, margin: 0))
+                        .listRowBackground(Color.clear)
+                        .overlay(alignment: .top) {
+                            if index > 0 {
+                                Divider()
+                                    .padding(.horizontal, 16)
+                            }
+                        }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                            if item.isDismissable {
+                                Button("Dismiss", systemImage: "xmark", role: .destructive) { device.dismiss(item) }
+                            }
+                        }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 10) {
+                PanelHeader("Files") {
+                    if device.transfers.count > 3 {
+                        Button("Show All") { onSelectSection(.files) }
+                            .buttonStyle(.link)
+                    }
+                }
+                TransfersCard(device: device, limit: 3)
+
+                Text("Files from \(device.name) are saved in Downloads.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 4)
+            }
+            .overviewRow(top: 18)
+
+            RemoteInputRow()
+                .overviewRow()
         }
+        .listStyle(.inset)
+        .scrollContentBackground(.hidden)
+        .noTopScrollEdge()
+        .readableCardList()
     }
+
+    /// Rows' own side inset, on top of the list's. None, so every card on
+    /// the page has the same edges as the notification cards.
+    fileprivate static let margin: CGFloat = 0
 
     // MARK: Header and actions
 
@@ -36,11 +104,11 @@ struct OverviewPane: View {
                     .foregroundStyle(.tint)
                     .frame(width: 40, height: 56)
                     .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(device.name)
                         .font(.largeTitle.weight(.bold))
                         .lineLimit(2)
-                    HStack(spacing: 8) {
+                    HStack(spacing: 14) {
                         StatusPill(
                             text: device.isViaTailscale ? "Tailscale" : "Wi-Fi",
                             systemImage: device.isViaTailscale ? "point.3.connected.trianglepath.dotted" : "wifi"
@@ -53,79 +121,117 @@ struct OverviewPane: View {
                             StatusPill(text: network, systemImage: "cellularbars", tint: .secondary)
                         }
                     }
+                    .accessibilityElement(children: .combine)
                 }
             }
 
-            HStack(spacing: 22) {
-                GlassCircleButton(title: "Find", systemImage: "speaker.wave.3.fill") { device.findMyPhone() }
-                GlassCircleButton(title: "Clipboard", systemImage: "doc.on.clipboard") { device.sendClipboard() }
-                GlassCircleButton(title: "Send Files", systemImage: "arrow.up.doc") {
-                    device.sendFiles(FilePicker.chooseFiles(sendingTo: device.name))
+            GlassGroup(spacing: 10) {
+                HStack(spacing: 10) {
+                    Button(isRinging ? "Ringing…" : DeviceAction.findPhone.title, systemImage: DeviceAction.findPhone.systemImage) {
+                        device.findMyPhone()
+                        isRinging = true
+                    }
+                    .symbolEffect(.variableColor.iterative, isActive: isRinging)
+                    .disabled(isRinging)
+                    .help(isRinging ? "\(device.name) rings until someone taps it" : DeviceAction.findPhone.help(for: device))
+                    .task(id: isRinging) {
+                        guard isRinging else { return }
+                        try? await Task.sleep(for: .seconds(10))
+                        isRinging = false
+                    }
+                    ClipboardMenu(device: device)
+                    if device.canLock {
+                        Button(DeviceAction.lock.title, systemImage: DeviceAction.lock.systemImage) { DeviceAction.lock.perform(on: device) }
+                            .help(DeviceAction.lock.help(for: device))
+                    }
                 }
-                if device.canLock {
-                    GlassCircleButton(title: "Lock", systemImage: "lock.fill") { device.lockDevice() }
-                }
+                .glassButton()
+                .buttonBorderShape(.capsule)
+                .controlSize(.large)
             }
         }
     }
 
-    // MARK: Details
+}
 
-    private var details: some View {
-        VStack(alignment: .leading, spacing: 28) {
-            header
+private extension View {
+    /// A row of the overview's list that isn't a notification: kept to the
+    /// page's column, with no separator and nothing behind it.
+    func overviewRow(top: CGFloat = 12, bottom: CGFloat = 12) -> some View {
+        frame(maxWidth: .infinity, alignment: .leading)
+            .listRowInsets(EdgeInsets(top: top, leading: OverviewPane.margin, bottom: bottom, trailing: OverviewPane.margin))
 
-            if device.hasNowPlaying {
-                NowPlayingPanel(device: device)
-            }
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+    }
+}
 
-            if !device.notifications.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
-                    PanelHeader("Notifications") {
-                        if device.notifications.count > 3 {
-                            Button("Show All") { onSelectSection(.notifications) }
-                                .buttonStyle(.link)
-                        }
-                    }
-                    VStack(spacing: 0) {
-                        ForEach(Array(device.notifications.prefix(3).enumerated()), id: \.element.id) { index, item in
-                            if index > 0 { Divider().padding(.leading, 16) }
-                            NotificationPreviewRow(item: item)
-                        }
-                    }
-                    .glassPanel()
-                }
-            }
+// MARK: - Clipboard
 
-            VStack(alignment: .leading, spacing: 10) {
-                PanelHeader("Files") {
-                    if device.transfers.count > 3 {
-                        Button("Show All") { onSelectSection(.files) }
-                            .buttonStyle(.link)
-                    }
-                }
-                Group {
-                    if device.transfers.isEmpty {
-                        Label("Drop files anywhere in this window to send them to \(device.name). Files it sends you are saved in Downloads.", systemImage: "arrow.down.doc")
-                            .foregroundStyle(.secondary)
-                            .padding(16)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        VStack(spacing: 0) {
-                            ForEach(Array(device.transfers.prefix(3).enumerated()), id: \.element.id) { index, item in
-                                if index > 0 { Divider().padding(.leading, 16) }
-                                TransferRow(item: item)
-                                    .padding(.horizontal, 14)
-                                    .padding(.vertical, 8)
-                            }
-                        }
-                    }
-                }
-                .glassPanel()
-            }
+/// Sends this Mac's clipboard with a click. The arrow lists what the device
+/// sent lately, to put back on the clipboard.
+private struct ClipboardMenu: View {
+    let device: DeviceViewModel
+    @State private var isShowingReceived = false
 
-            RemoteInputRow()
+    var body: some View {
+        // Two real glass buttons rather than one split menu button: a split
+        // menu draws its own bezel and ignores the glass button style.
+        Button(DeviceAction.sendClipboard.title, systemImage: DeviceAction.sendClipboard.systemImage) {
+            DeviceAction.sendClipboard.perform(on: device)
         }
+        .help("Send this Mac's clipboard to \(device.name)")
+
+        // A glass button with a popover, not a menu: a menu in content
+        // draws its own bezel and doesn't take the glass style.
+        Button {
+            isShowingReceived.toggle()
+        } label: {
+            Label("Clipboard from \(device.name)", systemImage: "chevron.down")
+                .labelStyle(.iconOnly)
+                // Square, and as tall as the text buttons' labels, so the
+                // circle is as tall as they are.
+                .frame(width: 16, height: 16)
+        }
+        .buttonBorderShape(.circle)
+        .popover(isPresented: $isShowingReceived, arrowEdge: .bottom) {
+            ReceivedClipboardList(device: device) { isShowingReceived = false }
+        }
+        .help("What \(device.name) sent to this Mac's clipboard")
+    }
+
+}
+
+/// What the device last put on this Mac's clipboard; a click copies one again.
+private struct ReceivedClipboardList: View {
+    let device: DeviceViewModel
+    let close: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Sent by \(device.name)")
+                .font(.headline)
+            if device.receivedClipboard.isEmpty {
+                // Android only lets an app read the clipboard when asked to.
+                Text("Nothing yet. Android only lets KDE Connect send what you copy when you ask it to: add the Send clipboard tile to Quick Settings on \(device.name) and tap it after copying.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ForEach(Array(device.receivedClipboard.enumerated()), id: \.offset) { _, text in
+                    Button {
+                        device.copyReceivedClipboard(text)
+                        close()
+                    } label: {
+                        Label(text.firstLine(limit: 48), systemImage: "doc.on.doc")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .help("Copy to this Mac's clipboard")
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+        .padding(14)
+        .frame(width: 300, alignment: .leading)
     }
 }
 
@@ -138,7 +244,21 @@ private struct NowPlayingPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            PanelHeader("Now Playing")
+            PanelHeader("Now Playing") {
+                // With more than one media app open on the phone, which one
+                // is shown and controlled.
+                if device.mediaPlayers.count > 1 {
+                    Picker("Player", selection: Binding(
+                        get: { device.currentMediaPlayer ?? "" },
+                        set: { device.chooseMediaPlayer($0) }
+                    )) {
+                        ForEach(device.mediaPlayers, id: \.self) { Text($0).tag($0) }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.menu)
+                    .fixedSize()
+                }
+            }
             VStack(spacing: 14) {
                 HStack(spacing: 14) {
                     artwork
@@ -182,7 +302,7 @@ private struct NowPlayingPanel: View {
                 .help(device.canSetVolume ? "Media volume on \(device.name)" : "Start playing something on \(device.name) to change its volume")
             }
             .padding(16)
-            .glassPanel()
+            .contentCard()
         }
         .onAppear { draftVolume = device.volume }
         .onChange(of: device.volume) {
@@ -220,10 +340,15 @@ private struct NowPlayingPanel: View {
 
 private struct NotificationPreviewRow: View {
     let item: PhoneNotification
+    let device: DeviceViewModel
+
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
-            HStack(alignment: .firstTextBaseline) {
+            HStack(alignment: .center, spacing: 6) {
+                NotificationAppIcon(appName: item.appName,
+                                    glyph: item.isFromSystem && item.imageIsGlyph ? item.imageData : device.glyph(for: item),
+                                    size: 18)
                 Text(item.appName)
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
@@ -235,16 +360,20 @@ private struct NotificationPreviewRow: View {
             Text(item.title)
                 .fontWeight(.semibold)
                 .lineLimit(1)
-            if !item.text.isEmpty {
-                // The message is the content, so it's not greyed out.
-                Text(item.text)
+            if item.isRedacted {
+                RedactedText()
+            } else if !item.conversation.isEmpty {
+                ConversationText(notification: item)
+                    .lineLimit(2)
+            } else if !item.text.isEmpty {
+                // The message is the content, so it's not greyed out. Its line
+                // breaks are spaces here: a two-line preview of text that
+                // breaks early would stop halfway across the card.
+                Text(item.text.joinedLines)
                     .lineLimit(2)
             }
-            if let code = item.code {
-                CopyCodeButton(code: code)
-                    .buttonStyle(.link)
-                    .padding(.top, 2)
-            }
+            NotificationQuickActions(notification: item, device: device)
+                .padding(.top, 4)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 11)
@@ -257,12 +386,9 @@ private struct NotificationPreviewRow: View {
 
 /// Shown only while Accessibility access is missing; once granted there's nothing to say.
 private struct RemoteInputRow: View {
-    @State private var isTrusted = InputSynthesizer.shared.isAccessibilityTrusted
-    @Environment(\.controlActiveState) private var controlActiveState
-
     var body: some View {
         Group {
-            if !isTrusted {
+            if Permissions.shared.accessibility == .off {
                 HStack(spacing: 14) {
                     Image(systemName: "cursorarrow.motionlines")
                         .font(.title2)
@@ -277,15 +403,11 @@ private struct RemoteInputRow: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 8)
-                    Button("Allow…") { InputSynthesizer.shared.openAccessibilitySettings() }
+                    Button("Allow…") { Permissions.shared.turnOnAccessibility() }
                 }
                 .padding(16)
-                .glassPanel()
+                .contentCard()
             }
-        }
-        // Re-check when the window regains focus, e.g. after visiting System Settings.
-        .onChange(of: controlActiveState) {
-            isTrusted = InputSynthesizer.shared.isAccessibilityTrusted
         }
     }
 }

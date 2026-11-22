@@ -2,36 +2,46 @@
 //  MenuBarView.swift
 //  Tether
 //
-//  Menu bar popover: floating glass panels, the connected phone first (wearing
-//  the same picture as the phone card in the window), then menu-style rows.
+//  Menu bar popover: what's new on the phone without opening the window.
+//  The phone and its state, its latest notifications and anything else
+//  waiting, what it's playing, then actions and app rows as menu items. One
+//  surface, as system menus are, with dividers between sections.
 //
 
 import SwiftUI
 import AppKit
 
-public struct MenuBarView: View {
+struct MenuBarView: View {
     @Bindable var appModel: TetherAppModel
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
+    @Environment(\.dismiss) private var dismiss
     @State private var isDropTargeted = false
+    /// What Send Clipboard would send, read when the popover opens.
+    @State private var clipboardPreview: String?
 
-    public init(appModel: TetherAppModel) {
+    init(appModel: TetherAppModel) {
         self.appModel = appModel
     }
 
-    public var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            header
-                .staggeredEntrance(0)
-
+    var body: some View {
+        // Spacing groups the sections. The one divider sets the app's own rows
+        // apart, as a menu does, and sits as close to its neighbours as a
+        // menu's separator: the rows either side have padding of their own.
+        VStack(alignment: .leading, spacing: 4) {
+          VStack(alignment: .leading, spacing: 12) {
             if let request = appModel.incomingPairRequest {
                 pairRequestCard(request)
-                    .staggeredEntrance(1)
+                    .staggeredEntrance(0)
             }
 
             if let device = appModel.primaryDevice {
                 deviceCard(device)
                     .staggeredEntrance(1)
+                actions(device)
+                    .staggeredEntrance(1)
+                activity(device)
+                    .staggeredEntrance(2)
                 if device.hasNowPlaying {
                     nowPlayingCard(device)
                         .staggeredEntrance(2)
@@ -45,19 +55,24 @@ public struct MenuBarView: View {
                 nearbyCard
                     .staggeredEntrance(3)
             }
+          }
+
+            Divider()
 
             VStack(spacing: 0) {
                 if let release = UpdateController.shared.availableRelease {
                     MenuRow(title: "Update to Tether \(release.version)…", systemImage: "arrow.down.circle") {
+                        closePopover()
                         UpdateController.shared.showWindow()
                     }
                 }
                 MenuRow(title: "Open Tether", systemImage: "macwindow") { openMainWindow() }
-                MenuRow(title: "Settings…", systemImage: "gearshape") {
+                MenuRow(title: "Settings…", systemImage: "gearshape", shortcut: ",") {
+                    closePopover()
                     openSettings()
                     NSApp.activate()
                 }
-                MenuRow(title: "Quit Tether", systemImage: "power") { NSApp.terminate(nil) }
+                MenuRow(title: "Quit Tether", systemImage: "power", shortcut: "q") { NSApp.terminate(nil) }
             }
         }
         .padding(12)
@@ -84,25 +99,30 @@ public struct MenuBarView: View {
             }
         }
         // Just the routine announcement: a thorough one makes a connected phone reconnect.
-        .onAppear { appModel.refreshDiscovery(thorough: false) }
+        .onAppear {
+            appModel.refreshDiscovery(thorough: false)
+            readClipboard()
+        }
+        // The popover is kept between openings, so onAppear runs only once;
+        // the clipboard is read again each time it's shown.
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
+            readClipboard()
+        }
+    }
+
+    private func readClipboard() {
+        let preview = NSPasteboard.general.string(forType: .string).map { $0.firstLine(limit: 120) }
+        if preview != clipboardPreview { clipboardPreview = preview }
+    }
+
+    /// Send Clipboard says what it would send, so there's no guessing which
+    /// way it goes.
+    private func help(for action: DeviceAction, on device: DeviceViewModel) -> String {
+        guard action == .sendClipboard else { return action.help(for: device) }
+        return clipboardPreview.flatMap { $0.isEmpty ? nil : "Send “\($0)” to \(device.name)" } ?? "Nothing copied on this Mac"
     }
 
     // MARK: - Sections
-
-    private var header: some View {
-        HStack {
-            Text("Tether")
-                .font(.title3.weight(.bold))
-            Spacer()
-            let connected = !appModel.connectedDevices.isEmpty
-            Label(connected ? "Connected" : "Not Connected", systemImage: "circle.fill")
-                .labelStyle(StatusDotLabelStyle(color: connected ? .green : .secondary))
-                .font(.callout)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.horizontal, 6)
-        .padding(.top, 2)
-    }
 
     private func deviceCard(_ device: DeviceViewModel) -> some View {
         VStack(spacing: 14) {
@@ -117,7 +137,16 @@ public struct MenuBarView: View {
                     Text(device.name)
                         .font(.headline)
                         .lineLimit(1)
+                    // The phone's state reads on the phone, not in a title above it.
                     HStack(spacing: 10) {
+                        // How it's connected says that it is: green, as on the overview.
+                        if !device.isViaTailscale {
+                            Label {
+                                Text("Wi-Fi")
+                            } icon: {
+                                Image(systemName: "wifi").foregroundStyle(.green)
+                            }
+                        }
                         if let battery = device.batteryPercent {
                             Label("\(battery)%", systemImage: DeviceSymbols.battery(battery, charging: device.isCharging))
                         }
@@ -125,37 +154,97 @@ public struct MenuBarView: View {
                             Label(network, systemImage: "cellularbars")
                         }
                         if device.isViaTailscale {
-                            Label("Tailscale", systemImage: "point.3.connected.trianglepath.dotted")
+                            Label {
+                                Text("Tailscale")
+                            } icon: {
+                                Image(systemName: "point.3.connected.trianglepath.dotted").foregroundStyle(.green)
+                            }
                         }
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize()
                 }
                 Spacer(minLength: 0)
                 if appModel.connectedDevices.count > 1 { deviceSwitcher }
             }
             .padding(.horizontal, 6)
             .padding(.top, 4)
-
-            HStack(spacing: 0) {
-                GlassCircleButton(title: "Find", systemImage: "speaker.wave.3.fill", size: 40) { device.findMyPhone() }
-                    .frame(maxWidth: .infinity)
-                if device.canLock {
-                    GlassCircleButton(title: "Lock", systemImage: "lock.fill", size: 40) { device.lockDevice() }
-                        .frame(maxWidth: .infinity)
-                }
-                GlassCircleButton(title: "Clipboard", systemImage: "doc.on.clipboard", size: 40) { device.sendClipboard() }
-                    .frame(maxWidth: .infinity)
-                GlassCircleButton(title: "Send Files", systemImage: "arrow.up.doc", size: 40) {
-                    NSApp.activate()
-                    device.sendFiles(FilePicker.chooseFiles(sendingTo: device.name))
-                }
-                .frame(maxWidth: .infinity)
-            }
-            .padding(.bottom, 2)
         }
-        .padding(8)
-        .glassPanel(radius: 20)
+        .padding(.top, 2)
+    }
+
+    // MARK: What's waiting
+
+    /// Notifications, unread texts and a running transfer: the things you'd
+    /// open the window to check.
+    @ViewBuilder
+    private func activity(_ device: DeviceViewModel) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            MenuRow(title: "Notifications", systemImage: "bell",
+                    detail: device.notifications.isEmpty ? "None" : "\(device.notifications.count)") {
+                open(.notifications, on: device)
+            }
+            ForEach(device.notifications.prefix(3)) { item in
+                PopoverNotificationRow(item: item) { open(.notifications, on: device) }
+            }
+
+            let unread = device.unreadMessageCount
+            if unread > 0 {
+                MenuRow(title: "Messages", systemImage: "message", detail: "\(unread) unread") {
+                    open(.messages, on: device)
+                }
+            }
+
+            if let transfer = device.transfers.first(where: { $0.status == .transferring }) {
+                Button { open(.files, on: device) } label: {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Label {
+                            Text(transfer.filename)
+                        } icon: {
+                            Image(systemName: transfer.direction == .incoming ? "arrow.down.circle" : "arrow.up.circle")
+                                .frame(width: 20)
+                        }
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        ProgressView(value: transfer.progress)
+                            .controlSize(.small)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(transfer.filename), \(Int(transfer.progress * 100)) percent")
+            }
+        }
+    }
+
+    // MARK: Actions
+
+    /// What you do to the phone: one row of small tiles, each with its name.
+    private func actions(_ device: DeviceViewModel) -> some View {
+        HStack(spacing: 8) {
+            ForEach([DeviceAction.findPhone, .lock, .sendFiles, .sendClipboard], id: \.self) { action in
+                if action.isAvailable(on: device) {
+                    ActionTile(title: action.title, systemImage: action.systemImage) {
+                        closePopover()
+                        action.perform(on: device)
+                    }
+                    .help(help(for: action, on: device))
+                    .disabled(action == .sendClipboard && (clipboardPreview?.isEmpty ?? true))
+                }
+            }
+        }
+        .padding(.horizontal, 6)
+    }
+
+    /// One line of the clipboard. The row truncates it to fit.
+
+    private func open(_ section: DeviceSection, on device: DeviceViewModel) {
+        appModel.sectionRequest = SectionRequest(deviceId: device.id, section: section)
+        openMainWindow()
     }
 
     private var deviceSwitcher: some View {
@@ -234,6 +323,20 @@ public struct MenuBarView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
+                // The same key KDE Connect shows on the phone; comparing the
+                // two is what makes pairing safe on a shared network.
+                if let fingerprint = request.fingerprint {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Check that the phone shows the same key:")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 1) {
+                            ForEach(FingerprintFormat.rows(fingerprint), id: \.self) { Text($0) }
+                        }
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                    }
+                }
                 HStack {
                     Button {
                         appModel.rejectIncomingPairRequest()
@@ -297,55 +400,182 @@ public struct MenuBarView: View {
     }
 
     private func openMainWindow() {
+        closePopover()
         openWindow(id: "main")
         NSApp.activate()
+    }
+
+    /// A menu closes when you choose from it. The popover is the key window
+    /// at the moment of the click, so it's closed directly if the dismiss
+    /// action leaves it up.
+    private func closePopover() {
+        let popover = NSApp.keyWindow
+        dismiss()
+        DispatchQueue.main.async {
+            if popover?.isVisible == true { popover?.close() }
+        }
     }
 }
 
 // MARK: - Pieces
 
+/// A section of the popover. The popover is already a panel, so a section is
+/// only padding; dividers set the sections apart.
 private struct PopoverCard<Content: View>: View {
     @ViewBuilder var content: Content
 
     var body: some View {
         content
-            .padding(14)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .glassPanel(radius: 20)
     }
 }
 
-/// A label whose icon is a small coloured status dot.
-private struct StatusDotLabelStyle: LabelStyle {
-    let color: Color
-
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 6) {
-            Circle().fill(color).frame(width: 7, height: 7)
-            configuration.title
-        }
-    }
-}
-
-/// A full-width row that highlights on hover, like an NSMenu item.
-private struct MenuRow: View {
+/// A small action button for a row of them: the symbol over its name.
+private struct ActionTile: View {
     let title: String
     let systemImage: String
     let action: () -> Void
-    @State private var isHovering = false
+    @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         Button(action: action) {
-            Label(title, systemImage: systemImage)
+            VStack(spacing: 3) {
+                Image(systemName: systemImage)
+                    .font(.body)
+                    .frame(height: 18)
+                Text(title)
+                    .font(.caption)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 3)
+            // Full strength when it can be used, dimmed when it can't:
+            // forcing .primary hid the disabled look.
+            .foregroundStyle(isEnabled ? AnyShapeStyle(.primary) : AnyShapeStyle(.tertiary))
+        }
+        .glassButton()
+        .buttonBorderShape(.roundedRectangle(radius: 10))
+    }
+}
+
+/// One notification in the popover: who it's from and what it says, on two
+/// lines. A sign-in code can be copied without leaving the popover.
+private struct PopoverNotificationRow: View {
+    let item: PhoneNotification
+    let open: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 8) {
+            Button(action: open) {
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        Text(item.title.isEmpty ? item.appName : item.title)
+                            .fontWeight(.medium)
+                            .lineLimit(1)
+                        Text(item.title.isEmpty ? "" : item.appName)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .layoutPriority(-1)
+                    }
+                    if !item.text.isEmpty {
+                        Text(item.text)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .foregroundStyle(isHovering ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
-                .background(isHovering ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 6, style: .continuous))
                 .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+
+            if let code = item.code {
+                CopyCodeButton(code: code, isCompact: true)
+                    .controlSize(.small)
+                    .fixedSize()
+            } else {
+                Text(item.date, format: .dateTime.hour().minute())
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        // Indented to the row titles above, past their icons.
+        .padding(.leading, 36)
+        .padding(.trailing, 8)
+        .padding(.vertical, 3)
+        .accessibilityElement(children: .contain)
+    }
+}
+
+/// A full-width row that highlights on hover, like an NSMenu item, with a
+/// detail or its key equivalent at the trailing edge.
+private struct MenuRow: View {
+    let title: String
+    let systemImage: String
+    /// A count or state shown at the trailing edge ("3", "2 unread").
+    var detail: String?
+    /// A second line under the title, cut short if it's long.
+    var subtitle: String?
+    /// The key pressed with Command, if the row has an equivalent.
+    var shortcut: Character?
+    let action: () -> Void
+    @State private var isHovering = false
+
+    private var trailing: String? {
+        detail ?? shortcut.map { "⌘\(String($0).uppercased())" }
+    }
+
+    var body: some View {
+        Button(action: action) {
+            HStack {
+                // One icon column, so titles line up whatever the symbol's width.
+                Label {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(title)
+                        if let subtitle {
+                            Text(subtitle)
+                                .font(.caption)
+                                .foregroundStyle(isHovering ? AnyShapeStyle(.white.opacity(0.8)) : AnyShapeStyle(.secondary))
+                                .truncationMode(.tail)
+                        }
+                    }
+                } icon: {
+                    Image(systemName: systemImage)
+                        .frame(width: 20)
+                }
+                .lineLimit(1)
+                Spacer(minLength: 8)
+                if let trailing {
+                    Text(trailing)
+                        .monospacedDigit()
+                        .foregroundStyle(isHovering ? AnyShapeStyle(.white.opacity(0.8)) : AnyShapeStyle(.secondary))
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .foregroundStyle(isHovering ? AnyShapeStyle(.white) : AnyShapeStyle(.primary))
+            .background(isHovering ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear), in: .rect(cornerRadius: 6, style: .continuous))
+            .contentShape(.rect)
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
+        .modifier(OptionalShortcut(key: shortcut))
+    }
+}
+
+private struct OptionalShortcut: ViewModifier {
+    let key: Character?
+
+    func body(content: Content) -> some View {
+        if let key {
+            content.keyboardShortcut(KeyEquivalent(key), modifiers: .command)
+        } else {
+            content
+        }
     }
 }
 

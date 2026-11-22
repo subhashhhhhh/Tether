@@ -29,44 +29,22 @@ struct DeviceDetailView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .navigationTitle(device.name)
-        .toolbar {
-            if device.isConnected {
-                ToolbarItem(placement: .principal) {
-                    Picker("Section", selection: Binding(get: { section }, set: onSelectSection)) {
-                        ForEach(DeviceSection.allCases) { section in
-                            Text(section.title).tag(section)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
-                }
-            }
-            // The overview has these on the phone card.
-            if device.isConnected, section != .overview {
-                ToolbarItemGroup(placement: .primaryAction) {
-                    Button("Find Phone", systemImage: "speaker.wave.3") { device.findMyPhone() }
-                        .help("Ring \(device.name) at full volume")
-                    if device.canLock {
-                        Button("Lock", systemImage: "lock") { device.lockDevice() }
-                            .help("Lock \(device.name)")
-                    }
-                    Button("Send Clipboard", systemImage: "doc.on.clipboard") { device.sendClipboard() }
-                        .help("Send this Mac's clipboard to \(device.name)")
-                    Button("Send Files", systemImage: "square.and.arrow.up") {
-                        device.sendFiles(FilePicker.chooseFiles(sendingTo: device.name))
-                    }
-                    .help("Send files to \(device.name)")
-                }
-            }
-        }
+        .navigationTitle(device.isConnected ? section.title : device.name)
+        // The sidebar says where you are; a title here only competes with
+        // the content, and runs into it now that content passes underneath.
+        .toolbar(removing: .title)
+        // No band behind the toolbar: content runs up under it on every page.
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     }
 
     private var connectedContent: some View {
         VStack(spacing: 0) {
-            if appModel.isNotificationPermissionDenied {
-                NotificationPermissionBanner { appModel.openNotificationSettings() }
+            if Permissions.shared.notifications == .off {
+                PermissionBanner(
+                    systemImage: "bell.slash.fill",
+                    message: "Notifications are turned off for Tether, so phone alerts and replies won't appear on this Mac.",
+                    action: Permissions.shared.turnOnNotifications
+                )
             }
 
             switch section {
@@ -95,37 +73,49 @@ struct DeviceDetailView: View {
     }
 }
 
+/// Shown while files are dragged over a connected device's page: the page
+/// blurs from edge to edge and says, in the middle, what dropping will do.
 private struct DropOverlay: View {
     let deviceName: String
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .strokeBorder(.tint, lineWidth: 3)
-            .background(.tint.opacity(0.06), in: .rect(cornerRadius: 10, style: .continuous))
-            .overlay(alignment: .bottom) {
+        ZStack {
+            // The blur runs to every edge, under the toolbar and the sidebar.
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .ignoresSafeArea()
+
+            // The prompt stays inside the safe area, so it's centred in the
+            // part of the pane you can see, wherever the sidebar is.
+            VStack(spacing: 14) {
+                Image(systemName: "arrow.up.doc.fill")
+                    .font(.system(size: 52, weight: .light))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(.tint)
+                    .accessibilityHidden(true)
                 Text("Drop to send to \(deviceName)")
-                    .font(.headline)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 7)
-                    .background(.bar, in: .capsule)
-                    .padding(.bottom, 24)
+                    .font(.title2.weight(.semibold))
             }
-            .padding(6)
-            .allowsHitTesting(false)
+        }
+        .allowsHitTesting(false)
     }
 }
 
-struct NotificationPermissionBanner: View {
-    let openSettings: () -> Void
+/// Says what's missing and why, with the one button that turns it on.
+struct PermissionBanner: View {
+    let systemImage: String
+    let message: String
+    let action: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "bell.slash.fill")
+            Image(systemName: systemImage)
                 .foregroundStyle(.orange)
-            Text("Notifications are turned off for Tether, so phone alerts and replies won't appear on this Mac.")
+                .accessibilityHidden(true)
+            Text(message)
                 .font(.callout)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Button("Turn On…", action: openSettings)
+            Button("Turn On…", action: action)
                 .controlSize(.small)
         }
         .padding(.horizontal, 16)
@@ -193,7 +183,7 @@ struct OfflineDeviceView: View {
     let appModel: TetherAppModel
     let onConnectByIP: () -> Void
 
-    @State private var isConfirmingUnpair = false
+    @State private var deviceToUnpair: DeviceViewModel?
 
     var body: some View {
         VStack(spacing: 18) {
@@ -217,18 +207,14 @@ struct OfflineDeviceView: View {
             }
             .controlSize(.large)
 
-            Button("Unpair…", role: .destructive) { isConfirmingUnpair = true }
+            Button("Unpair…", role: .destructive) { deviceToUnpair = device }
                 .buttonStyle(.link)
                 .foregroundStyle(.red)
                 .padding(.top, 8)
         }
         .frame(maxWidth: 380)
         .padding(32)
-        .confirmationDialog("Unpair \(device.name)?", isPresented: $isConfirmingUnpair) {
-            Button("Unpair", role: .destructive) { device.unpair() }
-        } message: {
-            Text("You'll need to pair again from \(device.name) to reconnect.")
-        }
+        .unpairConfirmation(for: $deviceToUnpair, name: \.name) { $0.unpair() }
     }
 }
 
@@ -239,11 +225,24 @@ struct OnboardingView: View {
     let onConnectByIP: () -> Void
 
     var body: some View {
-        VStack(spacing: 28) {
-            VStack(spacing: 12) {
+        // Centred when it fits; scrolls in a short window.
+        GeometryReader { proxy in
+            ScrollView {
+                content
+                    .padding(32)
+                    .frame(maxWidth: .infinity, minHeight: proxy.size.height)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+        }
+        .navigationTitle("Tether")
+    }
+
+    private var content: some View {
+        VStack(spacing: 24) {
+            VStack(spacing: 10) {
                 Image("TetherLogo")
                     .resizable()
-                    .frame(width: 84, height: 84)
+                    .frame(width: 72, height: 72)
                     .clipShape(.rect(cornerRadius: 19, style: .continuous))
                     .shadow(color: .black.opacity(0.15), radius: 6, y: 3)
                     .accessibilityHidden(true)
@@ -266,6 +265,26 @@ struct OnboardingView: View {
             }
             .frame(width: 400, alignment: .leading)
 
+            // macOS asks for Local Network on its own as Tether starts
+            // looking; this says why, and what's on, before anything else.
+            GroupBox {
+                VStack(alignment: .leading, spacing: 12) {
+                    MacPermissionRows()
+                    PermissionRow(
+                        title: "Phone drive",
+                        detail: "Show your phone in Finder as a drive once it's paired. KDE Connect on the phone asks for file access.",
+                        systemImage: "folder",
+                        status: .unknown
+                    ) {
+                        PhoneDriveToggle()
+                    }
+                }
+                .padding(6)
+            } label: {
+                Text("What Tether uses on this Mac")
+            }
+            .frame(width: 460)
+
             VStack(spacing: 10) {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
@@ -276,9 +295,6 @@ struct OnboardingView: View {
                     .buttonStyle(.link)
             }
         }
-        .padding(40)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .navigationTitle("Tether")
     }
 
     private func step(_ number: Int, _ title: String, @ViewBuilder detail: () -> some View) -> some View {

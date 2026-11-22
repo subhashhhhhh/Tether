@@ -1,0 +1,50 @@
+//
+//  PacketType.swift
+//  Tether
+//
+//  Every KDE Connect packet type Tether sends or reads, named once.
+//
+
+nonisolated enum PacketType {
+    static let battery = "kdeconnect.battery"
+    static let clipboard = "kdeconnect.clipboard"
+    static let clipboardConnect = "kdeconnect.clipboard.connect"
+    static let connectivityReport = "kdeconnect.connectivity_report"
+    static let contactsRequestAllUidsTimestamps = "kdeconnect.contacts.request_all_uids_timestamps"
+    static let contactsRequestVcardsByUid = "kdeconnect.contacts.request_vcards_by_uid"
+    static let contactsResponseUidsTimestamps = "kdeconnect.contacts.response_uids_timestamps"
+    static let contactsResponseVcards = "kdeconnect.contacts.response_vcards"
+    static let findmyphoneRequest = "kdeconnect.findmyphone.request"
+    static let identity = "kdeconnect.identity"
+    static let lock = "kdeconnect.lock"
+    static let lockRequest = "kdeconnect.lock.request"
+    static let mousepadEcho = "kdeconnect.mousepad.echo"
+    static let mousepadKeyboardstate = "kdeconnect.mousepad.keyboardstate"
+    static let mousepadRequest = "kdeconnect.mousepad.request"
+    static let mpris = "kdeconnect.mpris"
+    static let mprisRequest = "kdeconnect.mpris.request"
+    static let notification = "kdeconnect.notification"
+    static let notificationAction = "kdeconnect.notification.action"
+    static let notificationReply = "kdeconnect.notification.reply"
+    static let notificationRequest = "kdeconnect.notification.request"
+    static let pair = "kdeconnect.pair"
+    static let ping = "kdeconnect.ping"
+    static let presenter = "kdeconnect.presenter"
+    static let runcommand = "kdeconnect.runcommand"
+    static let runcommandOutput = "kdeconnect.runcommand.output"
+    static let runcommandRequest = "kdeconnect.runcommand.request"
+    static let sftp = "kdeconnect.sftp"
+    static let sftpRequest = "kdeconnect.sftp.request"
+    static let shareRequest = "kdeconnect.share.request"
+    static let shareRequestUpdate = "kdeconnect.share.request.update"
+    static let smsAttachmentFile = "kdeconnect.sms.attachment_file"
+    static let smsMessages = "kdeconnect.sms.messages"
+    static let smsRequest = "kdeconnect.sms.request"
+    static let smsRequestAttachment = "kdeconnect.sms.request_attachment"
+    static let smsRequestConversation = "kdeconnect.sms.request_conversation"
+    static let smsRequestConversations = "kdeconnect.sms.request_conversations"
+    static let systemvolume = "kdeconnect.systemvolume"
+    static let systemvolumeRequest = "kdeconnect.systemvolume.request"
+    static let telephony = "kdeconnect.telephony"
+    static let telephonyRequestMute = "kdeconnect.telephony.request_mute"
+}

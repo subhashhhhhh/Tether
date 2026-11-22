@@ -6,16 +6,16 @@
 import SwiftUI
 import UserNotifications
 
-public struct SettingsView: View {
+struct SettingsView: View {
     @Bindable var viewModel: SettingsViewModel
 
-    public init(viewModel: SettingsViewModel) {
+    init(viewModel: SettingsViewModel) {
         self.viewModel = viewModel
     }
 
-    public var body: some View {
+    var body: some View {
         TabView {
-            Tab("General", systemImage: "gearshape") {
+            Tab("General", systemImage: "gear") {
                 GeneralSettings(viewModel: viewModel)
             }
             Tab("Devices", systemImage: "iphone.gen3") {
@@ -32,7 +32,11 @@ public struct SettingsView: View {
             }
         }
         .frame(width: 560, height: 460)
-        .onAppear { viewModel.refresh() }
+        .onAppear {
+            viewModel.refresh()
+            DockPresence.windowOpened()
+        }
+        .onDisappear { DockPresence.windowClosed() }
     }
 }
 
@@ -226,8 +230,10 @@ private struct GeneralSettings: View {
     @State private var name = ""
     @AppStorage(MotionPreference.key) private var reduceMotion = false
     @AppStorage(OneTimeCode.autoCopyKey) private var copyCodes = false
+    @AppStorage(NativeNotificationFilter.deferToWhatsAppKey) private var deferToWhatsApp = true
     @AppStorage(CallMediaPauser.settingKey) private var pauseMediaDuringCalls = true
     @AppStorage(CallCard.settingKey) private var showCallCard = true
+    @AppStorage(PhoneNowPlaying.settingKey) private var showPhoneNowPlaying = true
     @AppStorage(AwayLock.settingKey) private var lockWhenPhoneLeaves = false
 
     var body: some View {
@@ -255,6 +261,14 @@ private struct GeneralSettings: View {
                 Toggle(isOn: $copyCodes) {
                     Text("Copy verification codes automatically")
                     Text("When a notification from your phone contains a sign-in code, Tether puts it on the clipboard.")
+                }
+                Toggle(isOn: $deferToWhatsApp) {
+                    Text("Let WhatsApp for Mac show its own alerts")
+                    Text("While WhatsApp is open on this Mac, Tether doesn't show a second banner for the same message. WhatsApp messages still appear in Tether's list.")
+                }
+                Toggle(isOn: $showPhoneNowPlaying) {
+                    Text("Show the phone's music in Now Playing")
+                    Text("What's playing on your phone appears in Control Center and the menu bar's Now Playing, and your Mac's media keys control it.")
                 }
                 Toggle(isOn: $showCallCard) {
                     Text("Show calls in a floating card")
@@ -348,14 +362,11 @@ private struct DevicesSettings: View {
 
             ForEach(viewModel.pairedDevices) { device in
                 Section {
-                    Toggle("Share clipboard", isOn: Binding(
-                        get: { device.isClipboardSyncEnabled },
-                        set: { viewModel.setSync(deviceId: device.deviceId, clipboard: $0, notifications: device.isNotificationSyncEnabled) }
-                    ))
-                    Toggle("Show phone notifications", isOn: Binding(
-                        get: { device.isNotificationSyncEnabled },
-                        set: { viewModel.setSync(deviceId: device.deviceId, clipboard: device.isClipboardSyncEnabled, notifications: $0) }
-                    ))
+                    Toggle(isOn: viewModel.binding(\.isClipboardSyncEnabled, for: device)) {
+                        Text("Send copies to \(device.deviceName) automatically")
+                        Text("When off, use Send Clipboard to send what you copied. What the phone sends always arrives.")
+                    }
+                    Toggle("Show phone notifications", isOn: viewModel.binding(\.isNotificationSyncEnabled, for: device))
                     LabeledContent("Paired", value: device.pairedDate.formatted(date: .abbreviated, time: .omitted))
                     if let lastSeen = device.lastSeenDate {
                         LabeledContent("Last connected", value: lastSeen.formatted(.relative(presentation: .named)))
@@ -372,57 +383,38 @@ private struct DevicesSettings: View {
             }
         }
         .formStyle(.grouped)
-        .confirmationDialog(
-            "Unpair \(deviceToUnpair?.deviceName ?? "device")?",
-            isPresented: Binding(get: { deviceToUnpair != nil }, set: { if !$0 { deviceToUnpair = nil } }),
-            presenting: deviceToUnpair
-        ) { device in
-            Button("Unpair", role: .destructive) { viewModel.unpair(deviceId: device.deviceId) }
-        } message: { device in
-            Text("You'll need to pair again from \(device.deviceName) to reconnect.")
-        }
+        .unpairConfirmation(for: $deviceToUnpair, name: \.deviceName) { viewModel.unpair(deviceId: $0.deviceId) }
     }
 }
 
 // MARK: - Permissions
 
-private struct PermissionsSettings: View {
+struct PermissionsSettings: View {
     @Bindable var viewModel: SettingsViewModel
-    @Environment(\.controlActiveState) private var controlActiveState
 
     var body: some View {
         Form {
             Section {
-                PermissionRow(
-                    title: "Notifications",
-                    detail: "Show phone notifications and let you reply from banners.",
-                    systemImage: "bell.badge",
-                    state: notificationState
-                ) {
-                    if viewModel.notificationAuthStatus == .notDetermined {
-                        Button("Allow") { viewModel.requestNotificationPermission() }
-                    } else {
-                        Button("Open Settings…") { viewModel.openNotificationSettings() }
-                    }
-                }
-
-                PermissionRow(
-                    title: "Accessibility",
-                    detail: "Let your phone move the pointer, type and click as a remote trackpad and presenter.",
-                    systemImage: "cursorarrow.motionlines",
-                    state: viewModel.isAccessibilityTrusted ? .granted : .needed
-                ) {
-                    if !viewModel.isAccessibilityTrusted {
-                        Button("Allow…") { viewModel.promptAccessibility() }
-                    }
-                }
+                MacPermissionRows()
+            } header: {
+                Text("This Mac")
             } footer: {
                 Text("Tether talks to your devices directly, over your local network or Tailscale. Nothing is sent to a server.")
                     .foregroundStyle(.secondary)
             }
 
+            ForEach(viewModel.pairedDevices) { device in
+                Section("On \(device.deviceName)") {
+                    PhoneFileAccessRow(deviceId: device.deviceId, deviceName: device.deviceName)
+                }
+            }
+
             Section("Presenter") {
-                LabeledContent("Laser pointer") {
+                // A plain row: LabeledContent with a button sat 2 pt above
+                // the centre of its box.
+                HStack {
+                    Text("Laser pointer")
+                    Spacer()
                     Button("Show Test Pointer") {
                         PresenterOverlayWindowController.shared.update(xPos: 0.5, yPos: 0.5)
                     }
@@ -430,25 +422,132 @@ private struct PermissionsSettings: View {
             }
         }
         .formStyle(.grouped)
-        .onChange(of: controlActiveState) { viewModel.refresh() }
+    }
+}
+
+/// Whether KDE Connect on the phone lets Tether see its storage. Android
+/// asks for this on the phone, so all Tether can do is say where.
+private struct PhoneFileAccessRow: View {
+    let deviceId: String
+    let deviceName: String
+
+    var body: some View {
+        let state = PhoneFilesController.shared.driveState(for: deviceId)
+        let answer = PhoneFileAccess.shared.answers[deviceId]
+        PermissionRow(title: "Files", detail: detail(state, answer), systemImage: "folder", status: status(state, answer)) {
+            PhoneDriveToggle()
+        }
     }
 
-    private var notificationState: PermissionState {
-        switch viewModel.notificationAuthStatus {
-        case .authorized, .provisional, .ephemeral: .granted
-        case .denied: .denied
-        default: .needed
+    /// What the phone last answered decides; a drive can be mounted while
+    /// the phone refuses every listing.
+    private func status(_ state: PhoneFilesController.DriveState, _ answer: PhoneFileAccess.Answer?) -> Permissions.Status {
+        if state == .turnedOff { return .unknown }
+        switch answer {
+        case .shared: return .allowed
+        case .refused, .noAnswer: return .off
+        case nil:
+            if case .failed(let message) = state, Self.isPermissionError(message) { return .off }
+            return .unknown
+        }
+    }
+
+    private func detail(_ state: PhoneFilesController.DriveState, _ answer: PhoneFileAccess.Answer?) -> String {
+        if state != .turnedOff {
+            switch answer {
+            case .refused(let message) where Self.isPermissionError(message):
+                return Self.allFilesAccessHelp(deviceName)
+            case .refused(let message):
+                return "KDE Connect on \(deviceName) won't share its storage: \(message)"
+            case .noAnswer:
+                return "KDE Connect on \(deviceName) didn't start its file server. On the phone, open KDE Connect, choose this Mac, and turn on Filesystem expose in Plugin settings."
+            default: break
+            }
+        }
+        switch state {
+        case .failed(let message) where Self.isPermissionError(message):
+            return Self.allFilesAccessHelp(deviceName)
+        case .failed(let message):
+            return "The phone drive couldn't start: \(message)"
+        case .turnedOff:
+            return "Off. Turn on to show \(deviceName) in Finder as a drive."
+        case .notConnected, .ejected:
+            return "Shows \(deviceName) in Finder as a drive. Checked when the phone connects."
+        case .mounting:
+            return "Checking…"
+        case .mounted:
+            return "\(deviceName) shares its storage, and shows in Finder as a drive."
+        }
+    }
+
+    private static func allFilesAccessHelp(_ deviceName: String) -> String {
+        "KDE Connect on \(deviceName) isn't allowed to share its storage. On the phone, open Settings › Apps › Special app access › All files access, and turn on KDE Connect."
+    }
+
+    static func isPermissionError(_ message: String) -> Bool {
+        message.localizedCaseInsensitiveContains("permission")
+    }
+}
+
+/// The phone drive, on or off: the same setting as Settings › Files.
+struct PhoneDriveToggle: View {
+    var body: some View {
+        @Bindable var files = PhoneFilesController.shared
+        Toggle("Show as a drive in Finder", isOn: $files.isEnabled)
+            .toggleStyle(.switch)
+            .labelsHidden()
+            .controlSize(.small)
+    }
+}
+
+/// Local Network, Notifications and Accessibility: each with what it's for,
+/// whether it's on, and the one button that turns it on.
+struct MacPermissionRows: View {
+    private let permissions = Permissions.shared
+
+    var body: some View {
+        PermissionRow(
+            title: "Local Network",
+            detail: "Find your phone and connect to it on Wi-Fi. Tether can't work without it.",
+            systemImage: "network",
+            status: permissions.localNetwork
+        ) {
+            if permissions.localNetwork == .off {
+                Button("Open Settings…") { permissions.openLocalNetworkSettings() }
+            }
+        }
+
+        PermissionRow(
+            title: "Notifications",
+            detail: "Show phone notifications and let you reply from banners.",
+            systemImage: "bell.badge",
+            status: permissions.notifications
+        ) {
+            switch permissions.notifications {
+            case .notAsked: Button("Allow") { permissions.turnOnNotifications() }
+            case .off: Button("Open Settings…") { permissions.turnOnNotifications() }
+            default: EmptyView()
+            }
+        }
+
+        PermissionRow(
+            title: "Accessibility",
+            detail: "Let your phone move the pointer, type and click as a remote trackpad and presenter. Optional.",
+            systemImage: "cursorarrow.motionlines",
+            status: permissions.accessibility
+        ) {
+            if permissions.accessibility != .allowed {
+                Button("Allow…") { permissions.turnOnAccessibility() }
+            }
         }
     }
 }
 
-private enum PermissionState { case granted, needed, denied }
-
-private struct PermissionRow<Action: View>: View {
+struct PermissionRow<Action: View>: View {
     let title: String
     let detail: String
     let systemImage: String
-    let state: PermissionState
+    let status: Permissions.Status
     @ViewBuilder var action: Action
 
     var body: some View {
@@ -457,10 +556,11 @@ private struct PermissionRow<Action: View>: View {
                 .font(.title3)
                 .foregroundStyle(.tint)
                 .frame(width: 26)
+                .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(title)
-                    statusBadge
+                    statusLabel
                 }
                 Text(detail)
                     .font(.callout)
@@ -471,17 +571,22 @@ private struct PermissionRow<Action: View>: View {
             action
         }
         .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder
-    private var statusBadge: some View {
-        switch state {
-        case .granted:
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).accessibilityLabel("Allowed")
-        case .denied:
+    private var statusLabel: some View {
+        switch status {
+        case .allowed:
+            Label("Allowed", systemImage: "checkmark.circle.fill")
+                .labelStyle(.iconOnly)
+                .foregroundStyle(.green)
+        case .off:
             Text("Off").font(.caption.weight(.medium)).foregroundStyle(.orange)
-        case .needed:
-            Text("Not allowed").font(.caption.weight(.medium)).foregroundStyle(.secondary)
+        case .notAsked:
+            Text("Not asked yet").font(.caption.weight(.medium)).foregroundStyle(.secondary)
+        case .unknown:
+            EmptyView()
         }
     }
 }
@@ -489,10 +594,6 @@ private struct PermissionRow<Action: View>: View {
 #if DEBUG
 #Preview("Settings") {
     SettingsView(viewModel: .mock())
-}
-
-#Preview("Permissions needed") {
-    SettingsView(viewModel: .mockDenied())
 }
 
 #Preview("About") {
