@@ -68,9 +68,12 @@ struct TetherApp: App {
     }
 
     var body: some Scene {
-        MenuBarExtra("Tether", image: appModel.statusMenuBarImageName) {
+        MenuBarExtra {
             MenuBarView(appModel: appModel)
                 .tetherMotionPreference()
+        } label: {
+            Image(nsImage: MenuBarIcon.image(count: appModel.waitingCount,
+                                             isConnected: !appModel.connectedDevices.isEmpty))
         }
         .menuBarExtraStyle(.window)
 

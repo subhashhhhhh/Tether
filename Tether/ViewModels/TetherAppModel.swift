@@ -67,8 +67,10 @@ final class TetherAppModel {
         return connectedDevices.first
     }
 
-    var statusMenuBarImageName: String {
-        connectedDevices.isEmpty ? "MenuBarDisconnected" : "MenuBarConnected"
+    /// Notifications and unread texts on connected phones: the Dock badge
+    /// and the menu bar icon both show it.
+    var waitingCount: Int {
+        connectedDevices.reduce(0) { $0 + $1.notifications.count + $1.unreadMessageCount }
     }
 
     init(isMock: Bool = false) {

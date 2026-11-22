@@ -86,12 +86,6 @@ struct MainWindowView: View {
     }
 
     /// Phone notifications and unread texts, across connected devices.
-    private var dockBadgeCount: Int {
-        appModel.connectedDevices.reduce(0) { total, device in
-            total + device.notifications.count + device.unreadMessageCount
-        }
-    }
-
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
             DeviceSidebar(appModel: appModel, selection: $selection) {
@@ -125,7 +119,7 @@ struct MainWindowView: View {
             DockPresence.windowOpened()
         }
         .onDisappear { DockPresence.windowClosed() }
-        .onChange(of: dockBadgeCount, initial: true) { DockPresence.setBadge(dockBadgeCount) }
+        .onChange(of: appModel.waitingCount, initial: true) { DockPresence.setBadge(appModel.waitingCount) }
         .onChange(of: appModel.sectionRequest) { applySectionRequest() }
         .onChange(of: selection) {
             if let id = selection?.deviceId, id != appModel.selectedDeviceId {
