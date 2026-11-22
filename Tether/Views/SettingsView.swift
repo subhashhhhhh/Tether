@@ -410,7 +410,11 @@ struct PermissionsSettings: View {
             }
 
             Section("Presenter") {
-                LabeledContent("Laser pointer") {
+                // A plain row: LabeledContent with a button sat 2 pt above
+                // the centre of its box.
+                HStack {
+                    Text("Laser pointer")
+                    Spacer()
                     Button("Show Test Pointer") {
                         PresenterOverlayWindowController.shared.update(xPos: 0.5, yPos: 0.5)
                     }
