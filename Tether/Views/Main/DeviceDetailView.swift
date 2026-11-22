@@ -270,6 +270,14 @@ struct OnboardingView: View {
             GroupBox {
                 VStack(alignment: .leading, spacing: 12) {
                     MacPermissionRows()
+                    PermissionRow(
+                        title: "Phone drive",
+                        detail: "Show your phone in Finder as a drive once it's paired. KDE Connect on the phone asks for file access.",
+                        systemImage: "folder",
+                        status: .unknown
+                    ) {
+                        PhoneDriveToggle()
+                    }
                 }
                 .padding(6)
             } label: {

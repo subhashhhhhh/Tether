@@ -430,7 +430,7 @@ private struct PhoneFileAccessRow: View {
     var body: some View {
         let state = PhoneFilesController.shared.driveState(for: deviceId)
         PermissionRow(title: "Files", detail: detail(state), systemImage: "folder", status: status(state)) {
-            EmptyView()
+            PhoneDriveToggle()
         }
     }
 
@@ -449,7 +449,7 @@ private struct PhoneFileAccessRow: View {
         case .failed(let message):
             "The phone drive couldn't start: \(message)"
         case .turnedOff:
-            "The phone drive is off. Turn it on in the Files tab."
+            "Off. Turn on to show \(deviceName) in Finder as a drive."
         case .notConnected, .ejected:
             "Shows \(deviceName) in Finder as a drive. Checked when the phone connects."
         case .mounting:
@@ -461,6 +461,17 @@ private struct PhoneFileAccessRow: View {
 
     static func isPermissionError(_ message: String) -> Bool {
         message.localizedCaseInsensitiveContains("permission")
+    }
+}
+
+/// The phone drive, on or off: the same setting as Settings › Files.
+struct PhoneDriveToggle: View {
+    var body: some View {
+        @Bindable var files = PhoneFilesController.shared
+        Toggle("Show as a drive in Finder", isOn: $files.isEnabled)
+            .toggleStyle(.switch)
+            .labelsHidden()
+            .controlSize(.small)
     }
 }
 
