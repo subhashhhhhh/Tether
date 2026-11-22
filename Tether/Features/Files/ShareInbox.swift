@@ -14,9 +14,11 @@ import UserNotifications
 final class ShareInbox {
     static let shared = ShareInbox()
 
-    private static let pasteboardName = NSPasteboard.Name("com.subhashh.Tether.share")
+    /// Held once: AppKit makes a new object for each lookup by name, and
+    /// `leaks` reports the ones it lets go of.
+    private static let pasteboard = NSPasteboard(name: .init("com.subhashh.Tether.share"))
     /// Connected devices, published for the extension's "Send to" chooser.
-    private static let devicesPasteboardName = NSPasteboard.Name("com.subhashh.Tether.devices")
+    private static let devicesPasteboard = NSPasteboard(name: .init("com.subhashh.Tether.devices"))
     private static let notificationName = Notification.Name("com.subhashh.Tether.shareRequest")
     /// Items older than this are ignored, so a stale hand-off is never replayed.
     private static let maximumAge: TimeInterval = 120
@@ -42,7 +44,7 @@ final class ShareInbox {
         guard list != publishedDevices,
               let json = try? JSONSerialization.data(withJSONObject: list) else { return }
         publishedDevices = list
-        let pasteboard = NSPasteboard(name: Self.devicesPasteboardName)
+        let pasteboard = Self.devicesPasteboard
         pasteboard.clearContents()
         pasteboard.setData(json, forType: Key.devices)
     }
@@ -70,7 +72,7 @@ final class ShareInbox {
     }
 
     private func drain() {
-        let pasteboard = NSPasteboard(name: Self.pasteboardName)
+        let pasteboard = Self.pasteboard
         guard let items = pasteboard.pasteboardItems, !items.isEmpty else { return }
         // Items are read lazily from the pasteboard server, so copy every value
         // out before clearing; after clearContents() they all read as nil.

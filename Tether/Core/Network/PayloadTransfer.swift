@@ -13,8 +13,8 @@
 //
 
 import Foundation
+import Network
 import Security
-import Darwin
 
 // MARK: - Port range and timeouts
 
@@ -26,8 +26,8 @@ nonisolated enum PayloadPort {
     /// Upstream waits 30s for the receiver to connect before giving up.
     static let acceptTimeout: TimeInterval = 30
 
-    /// Budget for the TLS handshake. Handshakes take milliseconds now that the
-    /// identity is held in memory; this only bounds a peer that stops responding.
+    /// Budget for the TLS handshake, which takes milliseconds; this only
+    /// bounds a peer that stops responding.
     static let handshakeTimeout: TimeInterval = 20
 
     /// Maximum time with no forward progress during the byte stream itself.
@@ -74,160 +74,127 @@ enum PayloadError: Error, LocalizedError {
     }
 }
 
-// MARK: - Non-blocking socket IO callbacks
-
-/// Non-blocking read, mirroring the contract used by `DeviceConnection`.
-///
-/// Payload sockets are put in non-blocking mode so a single `SSLHandshake` or
-/// `SSLRead` call can never block past its parent deadline — SecureTransport is
-/// expected to be re-driven by a polling loop that owns the timeout instead.
-///
-/// `errSSLWouldBlock` always means "call me again"; it must never be reported for
-/// a transient condition, or the TLS state machine is poisoned.
-nonisolated private func payloadSSLRead(
-    connection: SSLConnectionRef,
-    data: UnsafeMutableRawPointer,
-    dataLength: UnsafeMutablePointer<Int>
-) -> OSStatus {
-    let fd = Int32(bitPattern: UInt32(UInt(bitPattern: connection)))
-    let requested = dataLength.pointee
-    var totalRead = 0
-    var ptr = data
-
-    while totalRead < requested {
-        let n = Darwin.read(fd, ptr, requested - totalRead)
-        if n > 0 {
-            totalRead += n
-            ptr = ptr.advanced(by: n)
-            continue
-        }
-        if n == 0 {
-            dataLength.pointee = totalRead
-            return totalRead > 0 ? OSStatus(errSSLWouldBlock) : OSStatus(errSSLClosedGraceful)
-        }
-
-        let err = errno
-        if err == EINTR { continue }
-        if err == EAGAIN || err == EWOULDBLOCK {
-            // Partial record already read: hand it back so the caller can re-drive.
-            dataLength.pointee = totalRead
-            return OSStatus(errSSLWouldBlock)
-        }
-        if err == ECONNRESET || err == EPIPE || err == ENOTCONN || err == ESHUTDOWN {
-            dataLength.pointee = totalRead
-            return totalRead > 0 ? OSStatus(errSSLWouldBlock) : OSStatus(errSSLClosedGraceful)
-        }
-
-        dataLength.pointee = totalRead
-        return OSStatus(errSSLClosedAbort)
-    }
-
-    dataLength.pointee = totalRead
-    return noErr
-}
-
-nonisolated private func payloadSSLWrite(
-    connection: SSLConnectionRef,
-    data: UnsafeRawPointer,
-    dataLength: UnsafeMutablePointer<Int>
-) -> OSStatus {
-    let fd = Int32(bitPattern: UInt32(UInt(bitPattern: connection)))
-    let requested = dataLength.pointee
-    var totalWritten = 0
-    var ptr = data
-
-    while totalWritten < requested {
-        let n = Darwin.write(fd, ptr, requested - totalWritten)
-        if n > 0 {
-            totalWritten += n
-            ptr = ptr.advanced(by: n)
-            continue
-        }
-        if n == 0 {
-            dataLength.pointee = totalWritten
-            return OSStatus(errSSLClosedGraceful)
-        }
-
-        let err = errno
-        if err == EINTR { continue }
-        if err == EAGAIN || err == EWOULDBLOCK {
-            dataLength.pointee = totalWritten
-            return OSStatus(errSSLWouldBlock)
-        }
-        if err == EPIPE || err == ECONNRESET || err == ESHUTDOWN {
-            dataLength.pointee = totalWritten
-            return OSStatus(errSSLClosedGraceful)
-        }
-
-        dataLength.pointee = totalWritten
-        return OSStatus(errSSLClosedAbort)
-    }
-
-    dataLength.pointee = totalWritten
-    return noErr
-}
-
-// MARK: - Shared TLS helpers
+// MARK: - TLS
+//
+// Network.framework's TLS. SecureTransport, used before, is deprecated and
+// leaked memory on every handshake; the main connection still needs it,
+// since it turns TLS on partway through, but a payload socket is TLS from
+// the first byte.
 
 nonisolated enum PayloadTLS {
-    /// Puts a payload socket in non-blocking mode. Timeouts are enforced by the
-    /// polling loops in this file, not by the socket.
-    static func configureSocket(_ fd: Int32) {
-        let flags = fcntl(fd, F_GETFL, 0)
-        _ = fcntl(fd, F_SETFL, flags | O_NONBLOCK)
-
-        var on: Int32 = 1
-        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, socklen_t(MemoryLayout<Int32>.size))
-        // A write after the other side has gone (it cancelled, or the TLS
-        // goodbye after a cancel) must fail rather than raise SIGPIPE, which
-        // would end Tether.
-        setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+    /// Set when the peer's certificate isn't the paired device's, so the
+    /// failed handshake is reported as that rather than as a TLS error.
+    final class PeerCheck: @unchecked Sendable {
+        private let lock = NSLock()
+        private var mismatched = false
+        var isMismatch: Bool { lock.withLock { mismatched } }
+        func recordMismatch() { lock.withLock { mismatched = true } }
     }
 
-    /// Drives the TLS handshake until it completes or the deadline passes.
-    ///
-    /// The first `SSLHandshake` on a cold process can spend several seconds
-    /// resolving the signing identity in the keychain before reporting
-    /// `errSSLClientCertRequested`, so the deadline here must be generous.
-    static func handshake(_ ctx: SSLContext, fd: Int32, deadline: Date, label: String) -> OSStatus {
-        let status = SocketTLS.handshake(ctx, fd: fd, deadline: deadline)
-        TetherLog("[PayloadTLS] \(label) handshake finished with status \(status)")
-        return status
-    }
-
-    /// The payload socket must be held by the same device we are paired with.
-    /// Without this, anyone who can reach the port could feed or receive the data.
-    static func verifyPeer(_ ctx: SSLContext, expected: String?, label: String) -> Bool {
-        guard let expected else { return true }
-        let actual = SocketTLS.peerFingerprint(ctx)
-        guard SocketTLS.fingerprintsMatch(actual, expected) else {
-            TetherLog("[PayloadTLS] \(label) peer certificate \(actual ?? "none") does not match paired device")
-            return false
+    /// TLS with this Mac's certificate, accepting only a peer holding the
+    /// pinned one. Both sides present a certificate, as KDE Connect requires.
+    static func parameters(isServer: Bool, expectedPeerFingerprint: String?, check: PeerCheck,
+                           label: String, queue: DispatchQueue) -> NWParameters {
+        let tls = NWProtocolTLS.Options()
+        let sec = tls.securityProtocolOptions
+        if let identity = sec_identity_create(DeviceIdentity.shared.secIdentity) {
+            sec_protocol_options_set_local_identity(sec, identity)
         }
-        return true
+        sec_protocol_options_set_min_tls_protocol_version(sec, .TLSv12)
+        if isServer { sec_protocol_options_set_peer_authentication_required(sec, true) }
+        // The peer's certificate is self-signed and pinned by fingerprint at
+        // pairing. Without this, anyone who can reach the port could feed or
+        // receive the data.
+        sec_protocol_options_set_verify_block(sec, { _, trust, complete in
+            let trustRef = sec_trust_copy_ref(trust).takeRetainedValue()
+            let leaf = (SecTrustCopyCertificateChain(trustRef) as? [SecCertificate])?.first
+            let actual = leaf.map(SocketTLS.fingerprint(of:))
+            guard expectedPeerFingerprint == nil || SocketTLS.fingerprintsMatch(actual, expectedPeerFingerprint) else {
+                TetherLog("[PayloadTLS] \(label) peer certificate \(actual ?? "none") does not match paired device")
+                check.recordMismatch()
+                complete(false)
+                return
+            }
+            complete(true)
+        }, queue)
+
+        let tcp = NWProtocolTCP.Options()
+        tcp.noDelay = true
+        if !isServer { tcp.connectionTimeout = Int(PayloadPort.acceptTimeout) }
+        return NWParameters(tls: tls, tcp: tcp)
     }
 
-    static func makeContext(isServer: Bool, fd: Int32) -> SSLContext? {
-        guard let ctx = SSLCreateContext(
-            kCFAllocatorDefault,
-            isServer ? .serverSide : .clientSide,
-            .streamType
-        ) else { return nil }
-
-        SSLSetIOFuncs(ctx, payloadSSLRead, payloadSSLWrite)
-        SSLSetConnection(ctx, SSLConnectionRef(bitPattern: UInt(UInt32(bitPattern: fd))))
-        SSLSetCertificate(ctx, [DeviceIdentity.shared.secIdentity] as CFArray)
-
-        if isServer {
-            SSLSetClientSideAuthenticate(ctx, .alwaysAuthenticate)
-            SSLSetSessionOption(ctx, .breakOnClientAuth, true)
-        } else {
-            // The peer uses a self-signed certificate that we pin by fingerprint
-            // during pairing, so surface the auth event rather than rejecting.
-            SSLSetSessionOption(ctx, .breakOnServerAuth, true)
-            SSLSetSessionOption(ctx, .breakOnCertRequested, true)
+    static func error(_ error: NWError?, check: PeerCheck) -> PayloadError {
+        if check.isMismatch { return .certificateMismatch }
+        switch error {
+        case .posix(let code)?:
+            return code == .ETIMEDOUT ? .connectionTimeout : .socketFailure(code.rawValue)
+        case .tls(let status)?:
+            return .tlsHandshakeFailed(status)
+        default:
+            return .connectionTimeout
         }
-        return ctx
+    }
+
+    /// The first of several callbacks' answers, waited for.
+    final class FirstAnswer<Value>: @unchecked Sendable {
+        private let lock = NSLock()
+        private let answered = DispatchSemaphore(value: 0)
+        private var value: Value?
+
+        func answer(_ value: Value) {
+            let isFirst = lock.withLock { () -> Bool in
+                guard self.value == nil else { return false }
+                self.value = value
+                return true
+            }
+            if isFirst { answered.signal() }
+        }
+
+        /// Nil if nothing answered in time.
+        func wait(_ timeout: TimeInterval) -> Value? {
+            guard answered.wait(timeout: .now() + timeout) == .success else { return nil }
+            return lock.withLock { value }
+        }
+    }
+
+    /// Waits for the connection to be ready: connected, handshake done and
+    /// the peer checked. Nil when it is, else why not.
+    static func waitUntilReady(_ connection: NWConnection, timeout: TimeInterval, check: PeerCheck) -> PayloadError? {
+        let outcome = FirstAnswer<PayloadError?>()
+        connection.stateUpdateHandler = { state in
+            switch state {
+            case .ready: outcome.answer(nil)
+            // A refused connection waits to retry; a transfer can't.
+            case .failed(let error), .waiting(let error): outcome.answer(Self.error(error, check: check))
+            case .cancelled: outcome.answer(.cancelled)
+            default: break
+            }
+        }
+        return outcome.wait(timeout) ?? .connectionTimeout
+    }
+
+    /// Sends and waits until the bytes are handed to the network.
+    static func waitForPeerToClose(_ connection: NWConnection, timeout: TimeInterval = 5) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            let closed = FirstAnswer<Bool>()
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { _, _, complete, error in
+                closed.answer(complete || error != nil)
+            }
+            guard closed.wait(deadline.timeIntervalSinceNow) == false else { return }
+        }
+    }
+
+    enum SendResult { case sent, failed(NWError), timedOut }
+
+    static func send(_ data: Data?, on connection: NWConnection, isLast: Bool = false) -> SendResult {
+        let outcome = FirstAnswer<SendResult>()
+        connection.send(content: data, contentContext: isLast ? .finalMessage : .defaultMessage,
+                        isComplete: isLast, completion: .contentProcessed { error in
+            outcome.answer(error.map(SendResult.failed) ?? .sent)
+        })
+        return outcome.wait(PayloadPort.ioStallTimeout) ?? .timedOut
     }
 }
 
@@ -246,24 +213,21 @@ nonisolated final class PayloadUploader: @unchecked Sendable {
     }
 
     private let stateLock = NSLock()
-    private var listenFD: Int32 = -1
-    private var acceptedFD: Int32 = -1
-    private var sslContext: SSLContext?
+    private var listener: NWListener?
+    private var connection: NWConnection?
     private var isFinished = false
-    /// Set by cancel() once a receiver is connected: the TLS session is then
-    /// in use on the transfer's own thread, which tears it down itself.
-    private var isCancelRequested = false
+    private var onComplete: ((Result<Void, Error>) -> Void)?
 
-    /// Keeps the uploader alive for the duration of a transfer. The accept and
-    /// stream work happens on `queue`, so without this a caller that drops its
-    /// reference right after `start` would silently stall the transfer.
+    /// Keeps the uploader alive for the duration of a transfer: a caller may
+    /// drop its reference right after `start`.
     private var selfReference: PayloadUploader?
 
     private let queue = DispatchQueue(label: "com.subhashh.tether.payload.upload", qos: .userInitiated)
+    private let check = PayloadTLS.PeerCheck()
 
     init() {}
 
-    /// Opens a listening socket and begins waiting for the receiver.
+    /// Opens a listening port and begins waiting for the receiver.
     ///
     /// - Parameter onReady: Invoked once the port is bound. The caller must send the
     ///   payload-announcing packet after this returns, otherwise the peer has nothing
@@ -280,227 +244,133 @@ nonisolated final class PayloadUploader: @unchecked Sendable {
             onComplete(.failure(PayloadError.fileUnreadable(fileURL)))
             return
         }
-
-        var fd: Int32 = -1
-        var chosenPort: UInt16 = 0
-
-        var candidate = PayloadPort.min
-        while candidate <= PayloadPort.max {
-            let candidateFD = Self.makeListeningSocket(port: candidate)
-            if candidateFD >= 0 {
-                fd = candidateFD
-                chosenPort = candidate
-                break
-            }
-            candidate += 1
-        }
-
-        guard fd >= 0 else {
+        let parameters = PayloadTLS.parameters(isServer: true, expectedPeerFingerprint: expectedPeerFingerprint,
+                                               check: check, label: "server", queue: queue)
+        guard let (listener, port) = Self.listen(using: parameters, queue: queue) else {
             onComplete(.failure(PayloadError.noPortAvailable))
             return
         }
 
         stateLock.withLock {
-            self.listenFD = fd
+            self.listener = listener
+            self.onComplete = onComplete
             self.selfReference = self
         }
-        TetherLog("[PayloadUploader] Listening on port \(chosenPort) for \(fileURL.lastPathComponent) (\(size) bytes)")
-
-        onReady(Offer(port: chosenPort, size: size))
-
-        queue.async { [weak self] in
-            self?.acceptAndStream(
-                fileURL: fileURL,
-                size: size,
-                expectedPeerFingerprint: expectedPeerFingerprint,
-                onProgress: onProgress,
-                onComplete: onComplete
-            )
+        // One receiver per offer; anyone after it is turned away.
+        listener.newConnectionHandler = { [weak self] connection in
+            guard let self else { connection.cancel(); return }
+            let accepted = self.stateLock.withLock { () -> Bool in
+                guard self.connection == nil, !self.isFinished else { return false }
+                self.connection = connection
+                return true
+            }
+            guard accepted else { connection.cancel(); return }
+            listener.cancel()
+            DispatchQueue.global(qos: .userInitiated).async {
+                self.stream(fileURL: fileURL, size: size, over: connection, onProgress: onProgress)
+            }
         }
-    }
-
-    private static func makeListeningSocket(port: UInt16) -> Int32 {
-        // IPv4 and IPv6, so the phone can fetch over either.
-        let fd = SocketAddress.listener(port: port, reusePort: false)
-        guard fd >= 0 else { return -1 }
-
-        guard Darwin.listen(fd, 1) == 0 else {
-            Darwin.close(fd)
-            return -1
-        }
-        return fd
-    }
-
-    private func acceptAndStream(
-        fileURL: URL,
-        size: Int64,
-        expectedPeerFingerprint: String?,
-        onProgress: @escaping (Double) -> Void,
-        onComplete: @escaping (Result<Void, Error>) -> Void
-    ) {
-        let listenSocket = stateLock.withLock { listenFD }
-        guard listenSocket >= 0 else {
-            onComplete(.failure(PayloadError.cancelled))
-            return
-        }
-
-        // Wait for the receiver, bounded by the upstream 30s window. Uses poll()
-        // rather than a timer because this queue is blocked by the transfer.
-        var pollFd = pollfd(fd: listenSocket, events: Int16(POLLIN), revents: 0)
-        let pollResult = Darwin.poll(&pollFd, 1, Int32(PayloadPort.acceptTimeout * 1000))
-        TetherLog("[PayloadUploader] poll on fd \(listenSocket) returned \(pollResult) (revents \(pollFd.revents))")
-
-        guard pollResult > 0, (pollFd.revents & Int16(POLLIN)) != 0 else {
-            if stateLock.withLock({ isFinished }) { return }
+        queue.asyncAfter(deadline: .now() + PayloadPort.acceptTimeout) { [weak self] in
+            guard let self, self.stateLock.withLock({ self.connection == nil }) else { return }
             TetherLog("[PayloadUploader] Timed out waiting for receiver to connect")
-            finish(
-                with: .failure(pollResult == 0 ? PayloadError.connectionTimeout : PayloadError.socketFailure(errno)),
-                onComplete: onComplete
-            )
+            self.finish(.failure(PayloadError.connectionTimeout))
+        }
+        TetherLog("[PayloadUploader] Listening on port \(port) for \(fileURL.lastPathComponent) (\(size) bytes)")
+        onReady(Offer(port: port, size: size))
+    }
+
+    /// The first free port in the range upstream reserves, on IPv4 and IPv6.
+    private static func listen(using parameters: NWParameters, queue: DispatchQueue) -> (NWListener, UInt16)? {
+        for candidate in PayloadPort.min...PayloadPort.max {
+            guard let port = NWEndpoint.Port(rawValue: candidate),
+                  let listener = try? NWListener(using: parameters, on: port) else { continue }
+            let isReady = PayloadTLS.FirstAnswer<Bool>()
+            listener.stateUpdateHandler = { state in
+                switch state {
+                case .ready: isReady.answer(true)
+                case .failed, .waiting, .cancelled: isReady.answer(false)
+                default: break
+                }
+            }
+            // Connections that arrive before the handler is set wait for it.
+            listener.newConnectionHandler = { _ in }
+            listener.start(queue: queue)
+            if isReady.wait(2) == true {
+                return (listener, candidate)
+            }
+            listener.cancel()
+        }
+        return nil
+    }
+
+    private func stream(fileURL: URL, size: Int64, over connection: NWConnection, onProgress: @escaping (Double) -> Void) {
+        connection.start(queue: queue)
+        if let error = PayloadTLS.waitUntilReady(connection, timeout: PayloadPort.handshakeTimeout, check: check) {
+            TetherLog("[PayloadUploader] Receiver didn't connect: \(error.localizedDescription)")
+            finish(.failure(error))
             return
         }
-
-        guard let clientFD = SocketAddress.accept(listenSocket)?.fd else {
-            finish(with: .failure(PayloadError.socketFailure(errno)), onComplete: onComplete)
+        guard let file = try? FileHandle(forReadingFrom: fileURL) else {
+            finish(.failure(PayloadError.fileUnreadable(fileURL)))
             return
         }
-
-        stateLock.withLock { self.acceptedFD = clientFD }
-        TetherLog("[PayloadUploader] Accepted payload connection on fd \(clientFD)")
-
-        PayloadTLS.configureSocket(clientFD)
-
-        guard let ctx = PayloadTLS.makeContext(isServer: true, fd: clientFD) else {
-            finish(with: .failure(PayloadError.tlsHandshakeFailed(errSSLInternal)), onComplete: onComplete)
-            return
-        }
-        stateLock.withLock { self.sslContext = ctx }
-
-        let status = PayloadTLS.handshake(
-            ctx,
-            fd: clientFD,
-            deadline: Date().addingTimeInterval(PayloadPort.handshakeTimeout),
-            label: "server"
-        )
-        guard status == noErr else {
-            finish(with: .failure(PayloadError.tlsHandshakeFailed(status)), onComplete: onComplete)
-            return
-        }
-        guard PayloadTLS.verifyPeer(ctx, expected: expectedPeerFingerprint, label: "server") else {
-            finish(with: .failure(PayloadError.certificateMismatch), onComplete: onComplete)
-            return
-        }
-
-        guard let handle = try? FileHandle(forReadingFrom: fileURL) else {
-            finish(with: .failure(PayloadError.fileUnreadable(fileURL)), onComplete: onComplete)
-            return
-        }
-        defer { try? handle.close() }
+        defer { try? file.close() }
 
         var sent: Int64 = 0
-        var lastProgress = Date()
         var lastReported = 0.0
         while sent < size {
-            if stateLock.withLock({ isFinished || isCancelRequested }) {
-                finish(with: .failure(PayloadError.cancelled), onComplete: onComplete)
+            if stateLock.withLock({ isFinished }) { return }
+            let want = Int(min(Int64(PayloadPort.chunkSize), size - sent))
+            guard let chunk = try? file.read(upToCount: want), !chunk.isEmpty else { break }
+            switch PayloadTLS.send(chunk, on: connection) {
+            case .timedOut:
+                finish(.failure(PayloadError.connectionTimeout))
                 return
-            }
-
-            let remaining = size - sent
-            let want = Int(min(Int64(PayloadPort.chunkSize), remaining))
-            guard let chunk = try? handle.read(upToCount: want), !chunk.isEmpty else { break }
-
-            let writeStatus = SocketTLS.writeAll(
-                ctx,
-                fd: clientFD,
-                chunk,
-                deadline: Date().addingTimeInterval(PayloadPort.ioStallTimeout)
-            )
-            guard writeStatus == noErr else {
-                let cancelled = stateLock.withLock { isCancelRequested }
-                finish(with: .failure(cancelled ? PayloadError.cancelled : PayloadError.socketFailure(writeStatus)), onComplete: onComplete)
+            case .failed(let error):
+                // After a cancel this finds the transfer already finished.
+                finish(.failure(PayloadTLS.error(error, check: check)))
                 return
+            case .sent:
+                break
             }
-
             sent += Int64(chunk.count)
-            let now = Date()
-            if now.timeIntervalSince(lastProgress) > PayloadPort.ioStallTimeout {
-                finish(with: .failure(PayloadError.connectionTimeout), onComplete: onComplete)
-                return
-            }
-            lastProgress = now
-            // Whole percents, as downloads report: every 64 KB chunk was a
-            // main-thread hop and two published writes.
+            // Whole percents, as downloads report.
             let fraction = Double(sent) / Double(size)
             if fraction - lastReported >= 0.01 || sent == size {
                 lastReported = fraction
                 onProgress(fraction)
             }
         }
-
         guard sent == size else {
-            finish(with: .failure(PayloadError.peerClosedEarly(expected: size, received: sent)), onComplete: onComplete)
+            finish(.failure(PayloadError.peerClosedEarly(expected: size, received: sent)))
             return
         }
-
+        // Ends the TLS session, then waits briefly for the phone to close its
+        // side: closing first can reset the connection and lose bytes it
+        // hasn't read yet.
+        _ = PayloadTLS.send(nil, on: connection, isLast: true)
+        PayloadTLS.waitForPeerToClose(connection)
         TetherLog("[PayloadUploader] Sent \(sent) bytes for \(fileURL.lastPathComponent)")
-        finish(with: .success(()), onComplete: onComplete)
+        finish(.success(()))
     }
 
     func cancel() {
-        // Once a receiver is connected, its TLS session belongs to the
-        // transfer's thread: freeing it here, mid-write, crashed Tether. The
-        // socket is shut instead, which ends the write, and that thread
-        // finishes. Before then, closing the listening socket is enough.
-        let connected = stateLock.withLock { () -> Int32? in
-            guard !isFinished, acceptedFD >= 0 else { return nil }
-            isCancelRequested = true
-            return acceptedFD
-        }
-        if let connected {
-            Darwin.shutdown(connected, SHUT_RDWR)
-        } else {
-            finish(with: .failure(PayloadError.cancelled)) { _ in }
-        }
+        finish(.failure(PayloadError.cancelled))
     }
 
-    private func finish(with result: Result<Void, Error>, onComplete: @escaping (Result<Void, Error>) -> Void) {
-        typealias Teardown = (listen: Int32, client: Int32, ctx: SSLContext?)
-
-        let teardown = stateLock.withLock { () -> Teardown? in
+    /// Reports once, and lets go of the listener and connection.
+    private func finish(_ result: Result<Void, Error>) {
+        let teardown = stateLock.withLock { () -> (NWListener?, NWConnection?, ((Result<Void, Error>) -> Void)?, PayloadUploader?)? in
             guard !isFinished else { return nil }
-            let snapshot: Teardown = (listenFD, acceptedFD, sslContext)
             isFinished = true
-            listenFD = -1
-            acceptedFD = -1
-            sslContext = nil
-            return snapshot
+            defer { listener = nil; connection = nil; onComplete = nil; selfReference = nil }
+            return (listener, connection, onComplete, selfReference)
         }
-
-        // Already torn down by a concurrent cancel() or completion — report nothing
-        // so the completion handler is invoked exactly once.
-        guard let teardown else { return }
-
-        if teardown.listen >= 0 { Darwin.close(teardown.listen) }
-        if let ctx = teardown.ctx {
-            if case .success = result, teardown.client >= 0 {
-                // Let the phone read the last bytes before the socket goes away.
-                SocketTLS.closeGracefully(ctx, fd: teardown.client)
-            } else {
-                SSLClose(ctx)
-            }
-        }
-        if teardown.client >= 0 { Darwin.close(teardown.client) }
-
-        // Drop the self-retain, held in a local so the release happens outside the lock.
-        let released = stateLock.withLock { () -> PayloadUploader? in
-            let reference = selfReference
-            selfReference = nil
-            return reference
-        }
-        _ = released
-
-        onComplete(result)
+        guard let (listener, connection, onComplete, retained) = teardown else { return }
+        listener?.cancel()
+        if case .success = result { connection?.cancel() } else { connection?.forceCancel() }
+        onComplete?(result)
+        _ = retained
     }
 }
 
@@ -518,23 +388,24 @@ nonisolated enum PayloadDownloader {
     final class Handle: @unchecked Sendable {
         private let lock = NSLock()
         private var cancelled = false
-        private var fd: Int32 = -1
+        private var connection: NWConnection?
 
         var isCancelled: Bool { lock.withLock { cancelled } }
 
-        func attach(_ fd: Int32) -> Bool {
+        func attach(_ connection: NWConnection) -> Bool {
             lock.withLock {
-                self.fd = fd
+                self.connection = connection
                 return !cancelled
             }
         }
 
         func cancel() {
-            lock.withLock {
+            let connection = lock.withLock { () -> NWConnection? in
                 cancelled = true
-                // Wakes a read that is waiting on the socket.
-                if fd >= 0 { Darwin.shutdown(fd, SHUT_RDWR) }
+                return self.connection
             }
+            // Ends a receive that is waiting.
+            connection?.forceCancel()
         }
     }
 
@@ -597,60 +468,20 @@ nonisolated enum PayloadDownloader {
         handle: Handle,
         onProgress: @escaping (Double) -> Void
     ) -> Result<URL, Error> {
-        guard var address = SocketAddress.make(host: host, port: port) else {
-            return .failure(PayloadError.socketFailure(EINVAL))
-        }
-        let fd = socket(Int32(address.storage.ss_family), SOCK_STREAM, 0)
-        guard fd >= 0 else { return .failure(PayloadError.socketFailure(errno)) }
-        defer { Darwin.close(fd) }
-        guard handle.attach(fd) else { return .failure(PayloadError.cancelled) }
+        guard let nwPort = NWEndpoint.Port(rawValue: port) else { return .failure(PayloadError.socketFailure(EINVAL)) }
+        let queue = DispatchQueue(label: "com.subhashh.tether.payload.download", qos: .userInitiated)
+        let check = PayloadTLS.PeerCheck()
+        let parameters = PayloadTLS.parameters(isServer: false, expectedPeerFingerprint: expectedPeerFingerprint,
+                                               check: check, label: "client", queue: queue)
+        let connection = NWConnection(host: NWEndpoint.Host(host), port: nwPort, using: parameters)
+        guard handle.attach(connection) else { return .failure(PayloadError.cancelled) }
+        defer { connection.forceCancel() }
 
-        PayloadTLS.configureSocket(fd)
-
-        let connectResult = withUnsafePointer(to: &address.storage) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
-                Darwin.connect(fd, sockaddrPointer, address.length)
-            }
-        }
-
-        if connectResult != 0 {
-            guard errno == EINPROGRESS else {
-                TetherLog("[PayloadDownloader] Connect to \(host):\(port) failed (errno \(errno))")
-                return .failure(PayloadError.socketFailure(errno))
-            }
-
-            guard SocketTLS.wait(fd: fd, for: POLLOUT, until: Date().addingTimeInterval(PayloadPort.acceptTimeout)) else {
-                return .failure(PayloadError.connectionTimeout)
-            }
-
-            var socketError: Int32 = 0
-            var errorLength = socklen_t(MemoryLayout<Int32>.size)
-            getsockopt(fd, SOL_SOCKET, SO_ERROR, &socketError, &errorLength)
-            guard socketError == 0 else {
-                TetherLog("[PayloadDownloader] Connect to \(host):\(port) failed (SO_ERROR \(socketError))")
-                return .failure(PayloadError.socketFailure(socketError))
-            }
-        }
-
-        TetherLog("[PayloadDownloader] TCP connected to \(host):\(port), starting TLS client handshake")
-
-        guard let ctx = PayloadTLS.makeContext(isServer: false, fd: fd) else {
-            return .failure(PayloadError.tlsHandshakeFailed(errSSLInternal))
-        }
-        defer { SSLClose(ctx) }
-
-        let status = PayloadTLS.handshake(
-            ctx,
-            fd: fd,
-            deadline: Date().addingTimeInterval(PayloadPort.handshakeTimeout),
-            label: "client"
-        )
-        guard status == noErr else {
-            TetherLog("[PayloadDownloader] TLS handshake failed with status \(status)")
-            return .failure(PayloadError.tlsHandshakeFailed(status))
-        }
-        guard PayloadTLS.verifyPeer(ctx, expected: expectedPeerFingerprint, label: "client") else {
-            return .failure(PayloadError.certificateMismatch)
+        connection.start(queue: queue)
+        if let error = PayloadTLS.waitUntilReady(connection, timeout: PayloadPort.acceptTimeout + PayloadPort.handshakeTimeout, check: check) {
+            if handle.isCancelled { return .failure(PayloadError.cancelled) }
+            TetherLog("[PayloadDownloader] Couldn't connect to \(host):\(port): \(error.localizedDescription)")
+            return .failure(error)
         }
 
         let fm = FileManager.default
@@ -661,55 +492,43 @@ nonisolated enum PayloadDownloader {
         }
         defer { try? output.close() }
 
-        var received: Int64 = 0
-        var buffer = [UInt8](repeating: 0, count: PayloadPort.chunkSize)
-        var lastProgress = Date()
-        var lastReported = 0.0
-
         let isSizeKnown = size > 0
+        var received: Int64 = 0
+        var lastReported = 0.0
         while !isSizeKnown || received < size {
             if handle.isCancelled { return .failure(PayloadError.cancelled) }
-            var bytesRead = 0
-            let remaining = isSizeKnown ? Int(min(Int64(buffer.count), size - received)) : buffer.count
-            let readStatus = SSLRead(ctx, &buffer, remaining, &bytesRead)
+            let chunk = PayloadTLS.FirstAnswer<(data: Data?, isComplete: Bool, error: NWError?)>()
+            let wanted = isSizeKnown ? Int(min(Int64(PayloadPort.chunkSize), size - received)) : PayloadPort.chunkSize
+            connection.receive(minimumIncompleteLength: 1, maximumLength: wanted) { content, _, complete, error in
+                chunk.answer((content, complete, error))
+            }
+            guard let (data, isComplete, receiveError) = chunk.wait(PayloadPort.ioStallTimeout) else {
+                TetherLog("[PayloadDownloader] Stalled after \(received)/\(size) bytes")
+                return .failure(PayloadError.connectionTimeout)
+            }
+            if handle.isCancelled { return .failure(PayloadError.cancelled) }
 
-            if bytesRead > 0 {
+            if let data, !data.isEmpty {
                 do {
-                    try output.write(contentsOf: Data(bytes: buffer, count: bytesRead))
+                    try output.write(contentsOf: data)
                 } catch {
                     return .failure(PayloadError.fileUnwritable(destination))
                 }
-                received += Int64(bytesRead)
-                lastProgress = Date()
-
-                // Throttle progress callbacks to whole percents.
-                guard isSizeKnown else { continue }
-                let fraction = Double(received) / Double(size)
-                if fraction - lastReported >= 0.01 || received == size {
-                    lastReported = fraction
-                    onProgress(fraction)
+                received += Int64(data.count)
+                // Whole percents.
+                if isSizeKnown {
+                    let fraction = Double(received) / Double(size)
+                    if fraction - lastReported >= 0.01 || received == size {
+                        lastReported = fraction
+                        onProgress(fraction)
+                    }
                 }
-                continue
             }
-
-            switch readStatus {
-            case errSSLWouldBlock, errSSLPeerAuthCompleted:
-                let stallDeadline = lastProgress.addingTimeInterval(PayloadPort.ioStallTimeout)
-                guard SocketTLS.wait(fd: fd, for: POLLIN, until: stallDeadline) else {
-                    TetherLog("[PayloadDownloader] Stalled after \(received)/\(size) bytes")
-                    return .failure(PayloadError.connectionTimeout)
-                }
-                continue
-            case noErr:
-                break
-            case errSSLClosedGraceful where !isSizeKnown, errSSLClosedNoNotify where !isSizeKnown:
-                // The end of a file of unknown size.
+            guard isComplete || receiveError != nil else { continue }
+            if !isSizeKnown {
+                // The end of a file of unknown size, however the phone closed.
                 TetherLog("[PayloadDownloader] Received \(received) bytes (size not announced) from \(host):\(port)")
                 return .success(destination)
-            default:
-                if handle.isCancelled { return .failure(PayloadError.cancelled) }
-                TetherLog("[PayloadDownloader] Read failed with status \(readStatus)")
-                return .failure(PayloadError.peerClosedEarly(expected: size, received: received))
             }
             break
         }

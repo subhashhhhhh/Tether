@@ -106,20 +106,6 @@ nonisolated enum SocketTLS {
         return status
     }
 
-    /// Ends a connection without losing data still in flight: sends TLS
-    /// close_notify, half-closes, and waits briefly for the peer to finish
-    /// reading and close its side. Closing outright can reset the connection
-    /// and discard bytes the peer hasn't read yet.
-    static func closeGracefully(_ ctx: SSLContext, fd: Int32, timeout: TimeInterval = 5) {
-        SSLClose(ctx)
-        Darwin.shutdown(fd, SHUT_WR)
-        let deadline = Date().addingTimeInterval(timeout)
-        var buffer = [UInt8](repeating: 0, count: 4096)
-        while wait(fd: fd, for: POLLIN, until: deadline) {
-            if Darwin.read(fd, &buffer, buffer.count) <= 0 { break }
-        }
-    }
-
     /// Notices within about a minute that a phone has vanished without
     /// closing the connection (Wi-Fi turned off, out of range), so it stops
     /// showing as connected. macOS's defaults take minutes: a probe every 75 s,
