@@ -54,28 +54,9 @@ public final class TCPListenerService: @unchecked Sendable {
     }
 
     private func bindAndListen(on port: UInt16) -> Bool {
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        // IPv4 and IPv6, as KDE Connect desktop listens.
+        let fd = SocketAddress.listener(port: port, reusePort: true)
         guard fd >= 0 else { return false }
-
-        var reuse: Int32 = 1
-        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
-        setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &reuse, socklen_t(MemoryLayout<Int32>.size))
-
-        var addr = sockaddr_in()
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = in_port_t(port).bigEndian
-        addr.sin_addr.s_addr = in_addr_t(INADDR_ANY)
-
-        let bindResult = withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
-            }
-        }
-
-        guard bindResult == 0 else {
-            close(fd)
-            return false
-        }
 
         guard listen(fd, 10) == 0 else {
             close(fd)
@@ -97,19 +78,7 @@ public final class TCPListenerService: @unchecked Sendable {
     }
 
     private func acceptIncoming() {
-        var clientAddr = sockaddr_in()
-        var clientLen = socklen_t(MemoryLayout<sockaddr_in>.size)
-
-        let clientFD = withUnsafeMutablePointer(to: &clientAddr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
-                accept(serverFD, $0, &clientLen)
-            }
-        }
-
-        guard clientFD >= 0 else { return }
-
-        let clientIP = String(cString: inet_ntoa(clientAddr.sin_addr))
-        let clientPort = Int(UInt16(bigEndian: clientAddr.sin_port))
+        guard let (clientFD, clientIP, clientPort) = SocketAddress.accept(serverFD) else { return }
 
         TetherLog("[TCPListener] Accepted incoming connection from \(clientIP):\(clientPort)")
         delegate?.didAcceptConnection(socketFD: clientFD, clientIP: clientIP, clientPort: clientPort)

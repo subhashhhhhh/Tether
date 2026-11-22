@@ -313,25 +313,11 @@ public final class PayloadUploader: @unchecked Sendable {
     }
 
     private static func makeListeningSocket(port: UInt16) -> Int32 {
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        // IPv4 and IPv6, so the phone can fetch over either.
+        let fd = SocketAddress.listener(port: port, reusePort: false)
         guard fd >= 0 else { return -1 }
 
-        var reuse: Int32 = 1
-        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
-
-        var addr = sockaddr_in()
-        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = port.bigEndian
-        addr.sin_addr.s_addr = INADDR_ANY
-
-        let bindResult = withUnsafePointer(to: &addr) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
-                Darwin.bind(fd, sockaddrPointer, socklen_t(MemoryLayout<sockaddr_in>.size))
-            }
-        }
-
-        guard bindResult == 0, Darwin.listen(fd, 1) == 0 else {
+        guard Darwin.listen(fd, 1) == 0 else {
             Darwin.close(fd)
             return -1
         }
@@ -367,15 +353,7 @@ public final class PayloadUploader: @unchecked Sendable {
             return
         }
 
-        var clientAddr = sockaddr_in()
-        var addrLen = socklen_t(MemoryLayout<sockaddr_in>.size)
-        let clientFD = withUnsafeMutablePointer(to: &clientAddr) { pointer in
-            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
-                Darwin.accept(listenSocket, sockaddrPointer, &addrLen)
-            }
-        }
-
-        guard clientFD >= 0 else {
+        guard let clientFD = SocketAddress.accept(listenSocket)?.fd else {
             finish(with: .failure(PayloadError.socketFailure(errno)), onComplete: onComplete)
             return
         }
@@ -508,8 +486,34 @@ public enum PayloadDownloader {
         return caches.appendingPathComponent("TetherIncoming", isDirectory: true)
     }
 
+    /// Stops a download in progress.
+    public final class Handle: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cancelled = false
+        private var fd: Int32 = -1
+
+        var isCancelled: Bool { lock.withLock { cancelled } }
+
+        func attach(_ fd: Int32) -> Bool {
+            lock.withLock {
+                self.fd = fd
+                return !cancelled
+            }
+        }
+
+        public func cancel() {
+            lock.withLock {
+                cancelled = true
+                // Wakes a read that is waiting on the socket.
+                if fd >= 0 { Darwin.shutdown(fd, SHUT_RDWR) }
+            }
+        }
+    }
+
     /// Connects to the peer's payload server and streams `size` bytes to a
     /// temporary file, so memory stays flat no matter how large the file is.
+    /// A size of -1 means the phone didn't know it (a file from some apps):
+    /// then everything until the phone closes the connection is the file.
     ///
     /// - Parameters:
     ///   - host: Address of the peer that announced the transfer.
@@ -519,6 +523,7 @@ public enum PayloadDownloader {
     ///     transfer is refused if the payload server presents anything else.
     ///   - completion: Receives the temporary file. The caller owns it and must
     ///     move or delete it.
+    @discardableResult
     public static func download(
         host: String,
         port: UInt16,
@@ -526,22 +531,33 @@ public enum PayloadDownloader {
         expectedPeerFingerprint: String?,
         onProgress: @escaping @Sendable (Double) -> Void = { _ in },
         completion: @escaping @Sendable (Result<URL, Error>) -> Void
-    ) {
+    ) -> Handle {
+        let handle = Handle()
         DispatchQueue.global(qos: .userInitiated).async {
             let destination = incomingDirectory.appendingPathComponent(UUID().uuidString, isDirectory: false)
-            let result = performDownload(
-                host: host,
-                port: port,
-                size: size,
-                expectedPeerFingerprint: expectedPeerFingerprint,
-                destination: destination,
-                onProgress: onProgress
-            )
+            let result: Result<URL, Error>
+            if size == 0 {
+                // Nothing to fetch: an empty file is the whole file.
+                try? FileManager.default.createDirectory(at: incomingDirectory, withIntermediateDirectories: true)
+                result = FileManager.default.createFile(atPath: destination.path, contents: Data())
+                    ? .success(destination) : .failure(PayloadError.fileUnwritable(destination))
+            } else {
+                result = performDownload(
+                    host: host,
+                    port: port,
+                    size: size,
+                    expectedPeerFingerprint: expectedPeerFingerprint,
+                    destination: destination,
+                    handle: handle,
+                    onProgress: onProgress
+                )
+            }
             if case .failure = result {
                 try? FileManager.default.removeItem(at: destination)
             }
             completion(result)
         }
+        return handle
     }
 
     private static func performDownload(
@@ -550,18 +566,22 @@ public enum PayloadDownloader {
         size: Int64,
         expectedPeerFingerprint: String?,
         destination: URL,
+        handle: Handle,
         onProgress: @escaping (Double) -> Void
     ) -> Result<URL, Error> {
-        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard var address = SocketAddress.make(host: host, port: port) else {
+            return .failure(PayloadError.socketFailure(EINVAL))
+        }
+        let fd = socket(Int32(address.storage.ss_family), SOCK_STREAM, 0)
         guard fd >= 0 else { return .failure(PayloadError.socketFailure(errno)) }
         defer { Darwin.close(fd) }
+        guard handle.attach(fd) else { return .failure(PayloadError.cancelled) }
 
         PayloadTLS.configureSocket(fd)
 
-        var (addr, addrLen) = makeSockaddr(host: host, port: port)
-        let connectResult = withUnsafePointer(to: &addr) { pointer in
+        let connectResult = withUnsafePointer(to: &address.storage) { pointer in
             pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockaddrPointer in
-                Darwin.connect(fd, sockaddrPointer, addrLen)
+                Darwin.connect(fd, sockaddrPointer, address.length)
             }
         }
 
@@ -618,9 +638,11 @@ public enum PayloadDownloader {
         var lastProgress = Date()
         var lastReported = 0.0
 
-        while received < size {
+        let isSizeKnown = size > 0
+        while !isSizeKnown || received < size {
+            if handle.isCancelled { return .failure(PayloadError.cancelled) }
             var bytesRead = 0
-            let remaining = Int(min(Int64(buffer.count), size - received))
+            let remaining = isSizeKnown ? Int(min(Int64(buffer.count), size - received)) : buffer.count
             let readStatus = SSLRead(ctx, &buffer, remaining, &bytesRead)
 
             if bytesRead > 0 {
@@ -633,6 +655,7 @@ public enum PayloadDownloader {
                 lastProgress = Date()
 
                 // Throttle progress callbacks to whole percents.
+                guard isSizeKnown else { continue }
                 let fraction = Double(received) / Double(size)
                 if fraction - lastReported >= 0.01 || received == size {
                     lastReported = fraction
@@ -651,7 +674,12 @@ public enum PayloadDownloader {
                 continue
             case noErr:
                 break
+            case errSSLClosedGraceful where !isSizeKnown, errSSLClosedNoNotify where !isSizeKnown:
+                // The end of a file of unknown size.
+                TetherLog("[PayloadDownloader] Received \(received) bytes (size not announced) from \(host):\(port)")
+                return .success(destination)
             default:
+                if handle.isCancelled { return .failure(PayloadError.cancelled) }
                 TetherLog("[PayloadDownloader] Read failed with status \(readStatus)")
                 return .failure(PayloadError.peerClosedEarly(expected: size, received: received))
             }
@@ -667,12 +695,4 @@ public enum PayloadDownloader {
         return .success(destination)
     }
 
-    private static func makeSockaddr(host: String, port: UInt16) -> (sockaddr_in, socklen_t) {
-        var addr = sockaddr_in()
-        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
-        addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = port.bigEndian
-        inet_pton(AF_INET, host, &addr.sin_addr)
-        return (addr, socklen_t(MemoryLayout<sockaddr_in>.size))
-    }
 }

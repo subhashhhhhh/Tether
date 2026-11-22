@@ -57,6 +57,9 @@ public final class ContactsPlugin: ObservableObject, TetherPlugin, @unchecked Se
 
     public func onDisconnected(connection: DeviceConnection) {}
 
+    /// Its state belongs to the device, not the connection, and is kept.
+    public func onConnectionReplaced(old: DeviceConnection, new: DeviceConnection) {}
+
     public func handlePacket(connection: DeviceConnection, packet: NetworkPacket) {
         guard let deviceId = connection.peerDeviceInfo?.deviceId else { return }
         queue.async {

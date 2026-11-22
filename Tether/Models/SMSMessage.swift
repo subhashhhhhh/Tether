@@ -44,9 +44,18 @@ public struct SMSMessage: Identifiable, Sendable, Equatable {
     /// The SIM it went through (`sub_id`), when the phone knows.
     public let subId: Int64?
     public var attachments: [SMSAttachment]
+    /// The phone's own ID for it (`_id`); nil for one Tether added while
+    /// sending, before the phone reported it. SMS and MMS number theirs
+    /// separately, so it's paired with the date to name one message.
+    public var phoneId: Int64? = nil
 
+    /// What names this message on the phone, as KDE Connect desktop keys it.
+    public var phoneKey: String? { phoneId.map { "\($0)@\(Int64(date.timeIntervalSince1970 * 1000))" } }
+
+    /// Android's message box: 1 inbox, 2 sent, 4 outbox, 5 failed, 6
+    /// queued. Everything but the inbox was written on the phone.
     public var isOutgoing: Bool {
-        type == 2
+        [2, 4, 5, 6].contains(type)
     }
 
     public var formattedTime: String {
@@ -88,9 +97,9 @@ public struct SMSMessage: Identifiable, Sendable, Equatable {
 
     public static func from(dictionary dict: [String: Any]) -> SMSMessage? {
         let body = (dict["body"] as? String) ?? ""
-        let event = (dict["event"] as? Int) ?? 1
-        let type = (dict["type"] as? Int) ?? 1
-        let threadId = (dict["thread_id"] as? Int64) ?? Int64((dict["thread_id"] as? Int) ?? 0)
+        let event = integer(dict["event"]).map(Int.init) ?? 1
+        let type = integer(dict["type"]).map(Int.init) ?? 1
+        let threadId = integer(dict["thread_id"]) ?? 0
 
         let readVal: Bool
         if let b = dict["read"] as? Bool {
@@ -102,9 +111,9 @@ public struct SMSMessage: Identifiable, Sendable, Equatable {
         }
 
         // Phones that can't tell report 0, which isn't a real SIM.
-        let subId = (dict["sub_id"] as? Int64) ?? (dict["sub_id"] as? Int).map(Int64.init)
+        let subId = integer(dict["sub_id"])
 
-        let dateMs = (dict["date"] as? Int64) ?? Int64((dict["date"] as? Int) ?? 0)
+        let dateMs = integer(dict["date"]) ?? 0
         let date = dateMs > 0 ? Date(timeIntervalSince1970: Double(dateMs) / 1000.0) : Date()
 
         var addressList: [String] = []
@@ -119,7 +128,7 @@ public struct SMSMessage: Identifiable, Sendable, Equatable {
         var parsedAttachments: [SMSAttachment] = []
         if let rawAttachments = dict["attachments"] as? [[String: Any]] {
             for att in rawAttachments {
-                let partId = (att["part_id"] as? Int64) ?? Int64((att["part_id"] as? Int) ?? 0)
+                let partId = integer(att["part_id"]) ?? 0
                 let mimeType = (att["mime_type"] as? String) ?? "application/octet-stream"
                 let thumbnail = att["encoded_thumbnail"] as? String
                 let uniqueId = (att["unique_identifier"] as? String) ?? UUID().uuidString
@@ -132,7 +141,7 @@ public struct SMSMessage: Identifiable, Sendable, Equatable {
             }
         }
 
-        return SMSMessage(
+        var message = SMSMessage(
             event: event,
             body: body,
             addresses: addressList,
@@ -143,5 +152,19 @@ public struct SMSMessage: Identifiable, Sendable, Equatable {
             subId: subId.flatMap { $0 > 0 ? $0 : nil },
             attachments: parsedAttachments
         )
+        message.phoneId = integer(dict["_id"])
+        return message
+    }
+
+    /// A number from the phone's JSON, which may arrive as Int, Int64,
+    /// NSNumber or a string.
+    private static func integer(_ value: Any?) -> Int64? {
+        switch value {
+        case let int as Int: Int64(int)
+        case let int64 as Int64: int64
+        case let number as NSNumber: number.int64Value
+        case let string as String: Int64(string.trimmingCharacters(in: .whitespaces))
+        default: nil
+        }
     }
 }

@@ -10,6 +10,10 @@ struct TetherApp: App {
     @State private var appModel: TetherAppModel
 
     init() {
+        // AppKit adds Enter Full Screen to a View menu on its own, which
+        // would keep a View menu Tether doesn't otherwise have. The window's
+        // green button and Window › Full Screen Tile still do it.
+        UserDefaults.standard.register(defaults: ["NSFullScreenMenuItemEverywhere": false])
         #if DEBUG
         // `-TetherDemoData` fills the UI with sample devices for screenshots and
         // design work, without touching the network.

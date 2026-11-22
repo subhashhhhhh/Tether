@@ -95,6 +95,6 @@ public struct PresenterDotView: View {
                 .shadow(color: Color.red.opacity(0.8), radius: 6, x: 0, y: 0)
                 .position(x: x + (dotSize / 2), y: y + (dotSize / 2))
         }
-        .edgesIgnoringSafeArea(.all)
+        .ignoresSafeArea()
     }
 }

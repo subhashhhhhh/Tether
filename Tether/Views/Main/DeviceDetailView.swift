@@ -29,38 +29,12 @@ struct DeviceDetailView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .navigationTitle(device.name)
-        .toolbar {
-            if device.isConnected {
-                ToolbarItem(placement: .principal) {
-                    Picker("Section", selection: Binding(get: { section }, set: onSelectSection)) {
-                        ForEach(DeviceSection.allCases) { section in
-                            Text(section.title).tag(section)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
-                }
-            }
-            // The overview has these on the phone card.
-            if device.isConnected, section != .overview {
-                ToolbarItemGroup(placement: .primaryAction) {
-                    Button("Find Phone", systemImage: "speaker.wave.3") { device.findMyPhone() }
-                        .help("Ring \(device.name) at full volume")
-                    if device.canLock {
-                        Button("Lock", systemImage: "lock") { device.lockDevice() }
-                            .help("Lock \(device.name)")
-                    }
-                    Button("Send Clipboard", systemImage: "doc.on.clipboard") { device.sendClipboard() }
-                        .help("Send this Mac's clipboard to \(device.name)")
-                    Button("Send Files", systemImage: "square.and.arrow.up") {
-                        device.sendFiles(FilePicker.chooseFiles(sendingTo: device.name))
-                    }
-                    .help("Send files to \(device.name)")
-                }
-            }
-        }
+        .navigationTitle(device.isConnected ? section.title : device.name)
+        // The sidebar says where you are; a title here only competes with
+        // the content, and runs into it now that content passes underneath.
+        .toolbar(removing: .title)
+        // No band behind the toolbar: content runs up under it on every page.
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
     }
 
     private var connectedContent: some View {
@@ -95,23 +69,31 @@ struct DeviceDetailView: View {
     }
 }
 
+/// Shown while files are dragged over a connected device's page: the page
+/// blurs from edge to edge and says, in the middle, what dropping will do.
 private struct DropOverlay: View {
     let deviceName: String
 
     var body: some View {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
-            .strokeBorder(.tint, lineWidth: 3)
-            .background(.tint.opacity(0.06), in: .rect(cornerRadius: 10, style: .continuous))
-            .overlay(alignment: .bottom) {
+        ZStack {
+            // The blur runs to every edge, under the toolbar and the sidebar.
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .ignoresSafeArea()
+
+            // The prompt stays inside the safe area, so it's centred in the
+            // part of the pane you can see, wherever the sidebar is.
+            VStack(spacing: 14) {
+                Image(systemName: "arrow.up.doc.fill")
+                    .font(.system(size: 52, weight: .light))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(.tint)
+                    .accessibilityHidden(true)
                 Text("Drop to send to \(deviceName)")
-                    .font(.headline)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 7)
-                    .background(.bar, in: .capsule)
-                    .padding(.bottom, 24)
+                    .font(.title2.weight(.semibold))
             }
-            .padding(6)
-            .allowsHitTesting(false)
+        }
+        .allowsHitTesting(false)
     }
 }
 

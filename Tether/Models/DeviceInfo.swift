@@ -118,6 +118,7 @@ public struct DeviceInfo: Codable, Sendable, Identifiable {
         "kdeconnect.notification",
         "kdeconnect.notification.request",
         "kdeconnect.notification.reply",
+        "kdeconnect.notification.action",
         "kdeconnect.clipboard",
         "kdeconnect.clipboard.connect",
         "kdeconnect.battery",
@@ -194,20 +195,48 @@ public struct DeviceInfo: Codable, Sendable, Identifiable {
         return NetworkPacket(type: "kdeconnect.identity", body: body)
     }
 
+    static let validTCPPorts = 1...Int(UInt16.max)
+    /// KDE Connect's own rules for an identity, so a malformed one from the
+    /// network is turned away here as it is by the other KDE Connect apps.
+    static let minimumProtocolVersion = 8
+
+    static func isValidDeviceId(_ id: String) -> Bool {
+        (32...38).contains(id.count)
+            && id.unicodeScalars.allSatisfy { ($0.isASCII && ($0.properties.isAlphabetic || ("0"..."9").contains($0))) || $0 == "_" || $0 == "-" }
+    }
+
+    /// The name with the characters KDE Connect leaves out, cut to 32.
+    static func cleanName(_ name: String) -> String {
+        let removed = Set("\"',;:.!?()[]<>")
+        let cleaned = String(name.filter { !removed.contains($0) && !$0.isNewline })
+            .trimmingCharacters(in: .whitespaces)
+        return String(cleaned.prefix(32))
+    }
+
     // Parse from packet
     public static func from(packet: NetworkPacket) -> DeviceInfo? {
         guard packet.type == "kdeconnect.identity",
-              let deviceId = packet.string(for: "deviceId") else {
+              let deviceId = packet.string(for: "deviceId"),
+              isValidDeviceId(deviceId) else {
             return nil
         }
 
-        let name = packet.string(for: "deviceName") ?? "Unknown Device"
+        let cleaned = cleanName(packet.string(for: "deviceName") ?? "")
+        let name = cleaned.isEmpty ? "Unknown Device" : cleaned
         let rawType = packet.string(for: "deviceType") ?? "unknown"
         let type = DeviceType.from(string: rawType)
         let version = packet.int(for: "protocolVersion", default: NetworkPacket.protocolVersion)
+        guard version >= minimumProtocolVersion else { return nil }
         let incoming = Set(packet.stringArray(for: "incomingCapabilities"))
         let outgoing = Set(packet.stringArray(for: "outgoingCapabilities"))
-        let port = packet.body["tcpPort"] != nil ? packet.int(for: "tcpPort") : nil
+        // The identity arrives over UDP before anything is verified, so a port
+        // that can't be dialled drops the whole packet rather than reaching connect().
+        var port: Int?
+        if packet.body["tcpPort"] != nil {
+            let claimed = packet.int(for: "tcpPort")
+            guard Self.validTCPPorts.contains(claimed) else { return nil }
+            port = claimed
+        }
 
         return DeviceInfo(
             deviceId: deviceId,

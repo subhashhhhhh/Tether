@@ -247,7 +247,7 @@ struct CallCardView: View {
             }
         }
         // The card never takes focus, and its buttons shouldn't look disabled for it.
-        .environment(\.controlActiveState, .key)
+        .environment(\.appearsActive, true)
     }
 
     private func ringing(silenced: Bool) -> some View {

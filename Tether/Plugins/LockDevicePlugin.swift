@@ -22,6 +22,9 @@ public final class LockDevicePlugin: ObservableObject, TetherPlugin, @unchecked 
 
     public func onConnected(connection: DeviceConnection) {}
 
+    /// Its state belongs to the device, not the connection, and is kept.
+    public func onConnectionReplaced(old: DeviceConnection, new: DeviceConnection) {}
+
     public func onDisconnected(connection: DeviceConnection) {
         guard let deviceId = connection.peerDeviceInfo?.deviceId else { return }
         isLocked.removeValue(forKey: deviceId)

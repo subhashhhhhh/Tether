@@ -38,6 +38,9 @@ public final class DeviceViewModel: Identifiable, Hashable {
     public var nowPlayingArtist: String?
     public var nowPlayingAlbum: String?
     public var nowPlayingIsPlaying: Bool
+    /// The phone's media apps, and the one shown.
+    public var mediaPlayers: [String] = []
+    public var currentMediaPlayer: String?
     /// Decoded once when the bytes change, never in a view body.
     public private(set) var albumArt: NSImage?
     @ObservationIgnored private var albumArtData: Data?
@@ -48,6 +51,12 @@ public final class DeviceViewModel: Identifiable, Hashable {
     var contacts = ContactBook()
     public var commands: [RemoteCommand]
     public var notifications: [PhoneNotification]
+    /// The last few things the device sent to this Mac's clipboard, newest first.
+    public var receivedClipboard: [String] = []
+    /// Each app's status-bar glyph from the phone, by app name.
+    public var appGlyphs: [String: Data] = [:]
+    /// Bumped by the toolbar's New Message button; the Messages pane starts a draft.
+    public var composeRequests = 0
 
     /// True between asking a nearby device to pair and it answering.
     public var isAwaitingPairing = false
@@ -63,6 +72,8 @@ public final class DeviceViewModel: Identifiable, Hashable {
     // Action handlers injected by TetherAppModel or mocked
     public var onPing: (() -> Void)?
     public var onSendClipboard: (() -> Void)?
+    public var onCopyReceivedClipboard: ((String) -> Void)?
+    public var onCancelTransfer: ((UUID) -> Void)?
     public var onSendFiles: (([URL]) -> Void)?
     public var onFindPhone: (() -> Void)?
     public var onLockDevice: (() -> Void)?
@@ -74,11 +85,14 @@ public final class DeviceViewModel: Identifiable, Hashable {
     public var onSendSMS: (([String], String, Int64?, Int64?) -> Void)?
     public var onRefreshMessages: (() -> Void)?
     public var onOpenThread: ((Int64) -> Void)?
+    public var onOpenAttachment: ((SMSAttachment) -> Void)?
     public var onLoadEarlierMessages: ((Int64) -> Void)?
     public var onSetVolume: ((Float) -> Void)?
     public var onMediaAction: ((String) -> Void)?
+    public var onChooseMediaPlayer: ((String?) -> Void)?
     public var onReplyToNotification: ((PhoneNotification, String) -> Void)?
     public var onDismissNotification: ((PhoneNotification) -> Void)?
+    public var onNotificationAction: ((PhoneNotification, String) -> Void)?
 
     public init(
         id: String,
@@ -166,6 +180,8 @@ public final class DeviceViewModel: Identifiable, Hashable {
     // Actions
     public func ping() { onPing?() }
     public func sendClipboard() { onSendClipboard?() }
+    public func copyReceivedClipboard(_ text: String) { onCopyReceivedClipboard?(text) }
+    public func cancelTransfer(_ id: UUID) { onCancelTransfer?(id) }
     public func sendFiles(_ urls: [URL]) { onSendFiles?(urls) }
     public func findMyPhone() { onFindPhone?() }
     public func lockDevice() { onLockDevice?() }
@@ -194,10 +210,42 @@ public final class DeviceViewModel: Identifiable, Hashable {
             .max { $0.date < $1.date }
         return lastSent?.subId ?? sims.first?.id
     }
-    /// The thread's people by name where the phone's contacts know them.
+    /// The thread's people by name where the phone's contacts know them. A
+    /// business chat is named for the business, as the phone shows it.
     func title(for thread: SMSConversation) -> String {
         guard !thread.addresses.isEmpty else { return thread.title }
-        return thread.addresses.map { contacts.contact(for: $0)?.name ?? $0 }.joined(separator: ", ")
+        if let business = thread.addresses.lazy.compactMap(Self.businessName).first { return business }
+        return Self.unique(thread.addresses).map { contacts.contact(for: $0)?.name ?? $0 }.joined(separator: ", ")
+    }
+
+    /// A thread's addresses once each, in order. The phone can list one twice.
+    static func unique(_ addresses: [String]) -> [String] {
+        var seen = Set<String>()
+        return addresses.filter { seen.insert($0).inserted }
+    }
+
+    /// The name in an RCS business address: "bluedart_yftwsowo_agent@rbm.goog"
+    /// is Bluedart. Nil for anything else.
+    static func businessName(_ address: String) -> String? {
+        guard address.hasSuffix("@rbm.goog"), let local = address.split(separator: "@").first else { return nil }
+        var parts = local.split(separator: "_").map(String.init)
+        if parts.last == "agent" { parts.removeLast() }
+        // What's left ends in a random token; the words before it are the name.
+        if parts.count > 1 { parts.removeLast() }
+        let name = parts.joined(separator: " ")
+        return name.isEmpty ? nil : name.capitalized
+    }
+
+    /// Whether a thread is from a business's sender ID rather than a person:
+    /// one address that isn't in the contacts and isn't a phone number.
+    func isSenderID(_ thread: SMSConversation) -> Bool {
+        if thread.addresses.contains(where: { Self.businessName($0) != nil }) { return true }
+        guard thread.addresses.count == 1, let address = thread.addresses.first,
+              contacts.contact(for: address) == nil else { return false }
+        // "AD-HDFCBK-S", "AX-INDANE-S": letters, all capitals, no spaces. A
+        // name the phone sent in place of a number ("Mom") is still a person.
+        return address.contains(where: \.isLetter)
+            && !address.contains(where: { $0.isLowercase || $0.isWhitespace })
     }
 
     /// The contact photo for a one-to-one thread.
@@ -208,13 +256,24 @@ public final class DeviceViewModel: Identifiable, Hashable {
 
     public func refreshMessages() { onRefreshMessages?() }
     public func openThread(_ threadId: Int64) { onOpenThread?(threadId) }
+    public func openAttachment(_ attachment: SMSAttachment) { onOpenAttachment?(attachment) }
     public func loadEarlierMessages(_ threadId: Int64) { onLoadEarlierMessages?(threadId) }
     public func setVolume(_ val: Float) { onSetVolume?(val) }
     public func playPauseMedia() { onMediaAction?("PlayPause") }
+    public func chooseMediaPlayer(_ player: String) { onChooseMediaPlayer?(player) }
     public func nextMedia() { onMediaAction?("Next") }
     public func previousMedia() { onMediaAction?("Previous") }
     public func reply(to notification: PhoneNotification, text: String) { onReplyToNotification?(notification, text) }
     public func dismiss(_ notification: PhoneNotification) { onDismissNotification?(notification) }
+    /// The app's glyph for a notification: by package, else by the app
+    /// name it was saved under before.
+    public func glyph(for notification: PhoneNotification) -> Data? {
+        // Android's own icons differ per notification; there's no app icon.
+        guard !notification.isFromSystem else { return nil }
+        return appGlyphs[notification.glyphKey] ?? appGlyphs[notification.appName]
+    }
+
+    public func perform(_ action: String, on notification: PhoneNotification) { onNotificationAction?(notification, action) }
 }
 
 #if DEBUG
@@ -223,7 +282,13 @@ public final class DeviceViewModel: Identifiable, Hashable {
 extension DeviceViewModel {
     public static func mockConnectedPhone() -> DeviceViewModel {
         let now = Date()
-        let alex = SMSConversation(threadId: 101, addresses: ["Alex Rivera"], messages: [
+        let earlier = (0..<12).map { index in
+            SMSMessage(body: ["Morning!", "Did you see the agenda?", "Yes, looks fine", "Room 4 or 6?", "6, the one with the screen",
+                              "Got it", "Bringing the adapter", "Thanks", "Lunch after?", "Sure", "The usual place", "Perfect"][index],
+                       addresses: ["Alex Rivera"], date: now.addingTimeInterval(-3600 * 30 + Double(index) * 120),
+                       type: index % 2 == 0 ? 1 : 2, threadId: 101, read: true)
+        }
+        let alex = SMSConversation(threadId: 101, addresses: ["Alex Rivera"], messages: earlier + [
             SMSMessage(body: "Did the slides come through?", addresses: ["Alex Rivera"], date: now.addingTimeInterval(-3600 * 26), type: 1, threadId: 101, read: true),
             SMSMessage(body: "Yep, opening them now", addresses: ["Alex Rivera"], date: now.addingTimeInterval(-3600 * 25), type: 2, threadId: 101, read: true),
             SMSMessage(body: "Are we still on for 4?", addresses: ["Alex Rivera"], date: now.addingTimeInterval(-240), type: 1, threadId: 101, read: false),
@@ -259,12 +324,13 @@ extension DeviceViewModel {
             commands: RemoteCommand.defaultCommands,
             notifications: [
                 PhoneNotification(id: "n0", deviceId: "mock_phone", appName: "Messages", title: "Northwind", text: "739104 is your Northwind sign-in code. It expires in 10 minutes.", date: now.addingTimeInterval(-30), replyId: nil, isDismissable: true, code: "739104"),
-                PhoneNotification(id: "n1", deviceId: "mock_phone", appName: "WhatsApp", title: "Alex Smith", text: "Are we meeting at 4 PM today?", date: now.addingTimeInterval(-120), replyId: "r1", isDismissable: true),
+                PhoneNotification(id: "n1", deviceId: "mock_phone", appName: "WhatsApp", title: "Alex Smith", text: "Are we meeting at 4 PM today?", date: now.addingTimeInterval(-120), replyId: "r1", isDismissable: true, actions: ["Mark as read", "Mute"]),
                 PhoneNotification(id: "n2", deviceId: "mock_phone", appName: "Gmail", title: "Your order has shipped", text: "Arriving Thursday. Track your package for live updates.", date: now.addingTimeInterval(-1800), replyId: nil, isDismissable: true)
             ]
         )
         phone.canSetVolume = true
         phone.sims = [PhoneSIM(id: 1, number: 1, networkType: "5G"), PhoneSIM(id: 2, number: 2, networkType: "4G")]
+        phone.receivedClipboard = ["Gate B14, boarding 18:40", "https://maps.example.com/trailhead"]
         return phone
     }
 

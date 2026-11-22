@@ -73,6 +73,24 @@ struct TetherTests {
         #expect(parsedInfo?.deviceName == "My Pixel Phone")
     }
 
+    /// An identity is read from UDP before anything is verified; a port that
+    /// doesn't fit 16 bits used to trap when the connection was dialled.
+    @Test func testIdentityRejectsUndialablePorts() throws {
+        func identity(tcpPort: String?) throws -> DeviceInfo? {
+            let port = tcpPort.map { #","tcpPort":\#($0)"# } ?? ""
+            let json = #"{"id":1,"type":"kdeconnect.identity","body":{"deviceId":"abcdef0123456789abcdef0123456789","deviceName":"Pixel"\#(port)}}"#
+            return DeviceInfo.from(packet: try NetworkPacket.unserialize(from: Data(json.utf8)))
+        }
+
+        #expect(try identity(tcpPort: "1716")?.tcpPort == 1716)
+        #expect(try identity(tcpPort: "65535")?.tcpPort == 65535)
+        // No port is fine: the TLS identity doesn't carry one.
+        #expect(try #require(try identity(tcpPort: nil)).tcpPort == nil)
+        #expect(try identity(tcpPort: "70000") == nil)
+        #expect(try identity(tcpPort: "0") == nil)
+        #expect(try identity(tcpPort: "-1") == nil)
+    }
+
     @Test func testDeviceIdentity() throws {
         let identity = DeviceIdentity.shared
         #expect(!identity.deviceId.isEmpty)

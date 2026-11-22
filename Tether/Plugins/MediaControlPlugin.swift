@@ -46,8 +46,17 @@ public final class MediaControlPlugin: ObservableObject, TetherPlugin, @unchecke
 
     public let supportedPacketTypes = ["kdeconnect.mpris"]
 
-    /// Current track per device id.
+    /// The shown player's track, per device id.
     @Published public private(set) var nowPlaying: [String: NowPlaying] = [:]
+
+    /// Each player's state, by device then player. The phone reports each
+    /// player separately; merging them made the display flip between apps.
+    private var playerStates: [String: [String: NowPlaying]] = [:]
+    /// Each player's art URL, by device then player.
+    private var artURLByPlayer: [String: [String: String]] = [:]
+    /// The player chosen in the picker, per device; none means follow
+    /// whichever is playing.
+    @Published public private(set) var chosenPlayer: [String: String] = [:]
 
     /// Album art per device id, decoded from the payload when offered.
     @Published public private(set) var albumArt: [String: Data] = [:]
@@ -64,9 +73,14 @@ public final class MediaControlPlugin: ObservableObject, TetherPlugin, @unchecke
         requestState(connection: connection)
     }
 
+    /// Its state belongs to the device, not the connection, and is kept.
+    public func onConnectionReplaced(old: DeviceConnection, new: DeviceConnection) {}
+
     public func onDisconnected(connection: DeviceConnection) {
         guard let deviceId = connection.peerDeviceInfo?.deviceId else { return }
         nowPlaying.removeValue(forKey: deviceId)
+        playerStates.removeValue(forKey: deviceId)
+        artURLByPlayer.removeValue(forKey: deviceId)
         albumArt.removeValue(forKey: deviceId)
         albumArtURLs.removeValue(forKey: deviceId)
         players.removeValue(forKey: deviceId)
@@ -76,14 +90,29 @@ public final class MediaControlPlugin: ObservableObject, TetherPlugin, @unchecke
         guard packet.type == "kdeconnect.mpris",
               let deviceId = connection.peerDeviceInfo?.deviceId else { return }
 
-        let playerList = packet.stringArray(for: "playerList")
-        if !playerList.isEmpty {
+        if packet.body["playerList"] != nil {
+            let playerList = packet.stringArray(for: "playerList")
+            let known = Set(playerStates[deviceId]?.keys.map { $0 } ?? [])
             players[deviceId] = playerList
+            playerStates[deviceId] = playerStates[deviceId]?.filter { playerList.contains($0.key) }
+            if let chosen = chosenPlayer[deviceId], !playerList.contains(chosen) { chosenPlayer[deviceId] = nil }
+            // Each player answers for itself, so a new one is asked directly.
+            for player in playerList where !known.contains(player) {
+                connection.send(packet: NetworkPacket(
+                    type: "kdeconnect.mpris.request",
+                    body: ["player": player, "requestNowPlaying": true, "requestVolume": true]
+                ))
+            }
+            if playerList.isEmpty {
+                nowPlaying.removeValue(forKey: deviceId)
+                albumArt.removeValue(forKey: deviceId)
+                albumArtURLs.removeValue(forKey: deviceId)
+            }
         }
 
-        var state = nowPlaying[deviceId] ?? NowPlaying()
-
-        if let player = packet.string(for: "player") { state.player = player }
+        guard let player = packet.string(for: "player"), !player.isEmpty else { return }
+        var state = playerStates[deviceId]?[player] ?? NowPlaying()
+        state.player = player
         if let title = packet.string(for: "title") { state.title = title }
         if let artist = packet.string(for: "artist") { state.artist = artist }
         if let album = packet.string(for: "album") { state.album = album }
@@ -99,21 +128,54 @@ public final class MediaControlPlugin: ObservableObject, TetherPlugin, @unchecke
         if packet.body["canGoPrevious"] != nil { state.canGoPrevious = packet.bool(for: "canGoPrevious") }
         if packet.body["canSeek"] != nil { state.canSeek = packet.bool(for: "canSeek") }
 
-        nowPlaying[deviceId] = state
+        playerStates[deviceId, default: [:]][player] = state
+        if let url = packet.string(for: "albumArtUrl"), !packet.bool(for: "transferringAlbumArt") {
+            artURLByPlayer[deviceId, default: [:]][player] = url
+        }
+        showCurrentPlayer(deviceId: deviceId, connection: connection)
+    }
+
+    /// The player to show: the one chosen, else the one shown while it plays,
+    /// else any that's playing, else the one shown, else the first.
+    private func currentPlayerName(deviceId: String) -> String? {
+        let states = playerStates[deviceId] ?? [:]
+        if let chosen = chosenPlayer[deviceId], states[chosen] != nil { return chosen }
+        if let shown = nowPlaying[deviceId]?.player, states[shown]?.isPlaying == true { return shown }
+        if let playing = (players[deviceId] ?? []).first(where: { states[$0]?.isPlaying == true }) { return playing }
+        if let shown = nowPlaying[deviceId]?.player, states[shown] != nil { return shown }
+        return (players[deviceId] ?? []).first { states[$0] != nil } ?? states.keys.sorted().first
+    }
+
+    private func showCurrentPlayer(deviceId: String, connection: DeviceConnection) {
+        guard let name = currentPlayerName(deviceId: deviceId), let state = playerStates[deviceId]?[name] else { return }
+        if nowPlaying[deviceId] != state { nowPlaying[deviceId] = state }
 
         // The phone names the track's art by URL and sends the image only when
         // asked for that URL, as a payload on a later packet.
-        if !packet.bool(for: "transferringAlbumArt"), let url = packet.string(for: "albumArtUrl"),
-           url != albumArtURLs[deviceId] {
+        if let url = artURLByPlayer[deviceId]?[name], url != albumArtURLs[deviceId] {
             albumArtURLs[deviceId] = url
             if url.isEmpty {
                 albumArt.removeValue(forKey: deviceId)
             } else {
                 connection.send(packet: NetworkPacket(
                     type: "kdeconnect.mpris.request",
-                    body: ["player": state.player, "albumArtUrl": url]
+                    body: ["player": name, "albumArtUrl": url]
                 ))
             }
+        }
+    }
+
+    /// Shows and controls this player; nil goes back to following whichever
+    /// is playing.
+    public func choosePlayer(_ player: String?, connection: DeviceConnection) {
+        guard let deviceId = connection.peerDeviceInfo?.deviceId else { return }
+        chosenPlayer[deviceId] = player
+        showCurrentPlayer(deviceId: deviceId, connection: connection)
+        if let player {
+            connection.send(packet: NetworkPacket(
+                type: "kdeconnect.mpris.request",
+                body: ["player": player, "requestNowPlaying": true, "requestVolume": true]
+            ))
         }
     }
 
@@ -159,9 +221,10 @@ public final class MediaControlPlugin: ObservableObject, TetherPlugin, @unchecke
         connection.send(packet: NetworkPacket(type: "kdeconnect.mpris.request", body: body))
     }
 
-    /// Seeks by a relative offset in milliseconds.
-    public func seek(offsetMilliseconds: Int, connection: DeviceConnection) {
-        var body: [String: Any] = ["Seek": offsetMilliseconds]
+    /// Moves to a position in the track, in milliseconds. The phone takes
+    /// only an absolute position; it ignores a relative `Seek`.
+    public func setPosition(milliseconds: Int, connection: DeviceConnection) {
+        var body: [String: Any] = ["SetPosition": max(0, milliseconds)]
         if let player = currentPlayer(connection: connection) {
             body["player"] = player
         }

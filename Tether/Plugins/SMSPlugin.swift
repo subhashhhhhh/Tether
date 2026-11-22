@@ -5,6 +5,7 @@
 //  Plugin for viewing and replying to SMS conversations from macOS.
 //
 
+import AppKit
 import Foundation
 import Combine
 
@@ -20,58 +21,89 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
         [Self.messagesType, Self.attachmentFileType]
     }
 
-    @Published public private(set) var conversations: [Int64: SMSConversation] = [:]
+    /// By device, then thread: thread IDs are only unique on one phone, and
+    /// with two phones a reply must reach the right one.
+    @Published public private(set) var conversations: [String: [Int64: SMSConversation]] = [:]
     @Published public private(set) var activeThreadId: Int64?
 
     private let lock = NSLock()
 
     public init() {}
 
+    /// Asks on every connect: the phone sends new messages as they arrive
+    /// only once it has been asked for messages since it connected, and the
+    /// answer fills the unread counts. A swapped connection keeps the phone's
+    /// side as it was, so that needs nothing (see onConnectionReplaced).
     public func onConnected(connection: DeviceConnection) {
         requestAllConversations(connection: connection)
     }
 
     public func onDisconnected(connection: DeviceConnection) {}
 
+    /// Its state belongs to the device, not the connection, and is kept.
+    public func onConnectionReplaced(old: DeviceConnection, new: DeviceConnection) {}
+
     public func handlePacket(connection: DeviceConnection, packet: NetworkPacket) {
-        if packet.type == Self.messagesType {
-            handleBatchMessages(packet: packet)
+        if packet.type == Self.messagesType, let deviceId = connection.peerDeviceInfo?.deviceId {
+            handleBatchMessages(packet: packet, deviceId: deviceId)
         }
     }
 
+    /// Where attachments are kept once fetched, so each is fetched once.
+    static let attachmentDirectory: URL = {
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        return caches.appendingPathComponent("TetherAttachments", isDirectory: true)
+    }()
+
+    /// The file for an attachment; `uniqueIdentifier` comes from the phone, so
+    /// it's only ever used sanitised.
+    static func attachmentURL(for uniqueIdentifier: String) -> URL {
+        attachmentDirectory.appendingPathComponent(SafeFilename.sanitize(uniqueIdentifier, fallback: "attachment"))
+    }
+
+    /// Attachments clicked before they'd arrived, opened when they do.
+    private var attachmentsToOpen: Set<String> = []
+
     public func handlePayload(connection: DeviceConnection, packet: NetworkPacket, fileURL payloadURL: URL) {
-        guard packet.type == Self.attachmentFileType else { return }
-        // `filename` is the attachment's identifier on the phone; it is matched
-        // as-is below but must never be used as a path without sanitising.
-        let filename = packet.string(for: "filename") ?? "attachment"
-        let cachesDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        let attachmentDir = cachesDir.appendingPathComponent("TetherAttachments", isDirectory: true)
-
-        try? FileManager.default.createDirectory(at: attachmentDir, withIntermediateDirectories: true)
-        let fileURL = attachmentDir.appendingPathComponent(SafeFilename.sanitize(filename, fallback: "attachment"))
-
+        guard packet.type == Self.attachmentFileType, let deviceId = connection.peerDeviceInfo?.deviceId,
+              let identifier = packet.string(for: "filename"), !identifier.isEmpty else { return }
+        // The phone names the attachment only by its identifier, not its
+        // conversation, so every conversation of this phone is searched.
+        let fileURL = Self.attachmentURL(for: identifier)
         do {
+            try? FileManager.default.createDirectory(at: Self.attachmentDirectory, withIntermediateDirectories: true)
             try? FileManager.default.removeItem(at: fileURL)
             try FileManager.default.moveItem(at: payloadURL, to: fileURL)
-            TetherLog("[SMSPlugin] Saved SMS attachment to \(fileURL.path)")
-
-            let targetThreadId = (packet.int64(for: "thread_id")) != 0 ? packet.int64(for: "thread_id") : nil
-            if let threadId = targetThreadId {
-                DispatchQueue.main.async {
-                    if var conversation = self.conversations[threadId] {
-                        for msgIndex in conversation.messages.indices {
-                            for attIndex in conversation.messages[msgIndex].attachments.indices {
-                                if conversation.messages[msgIndex].attachments[attIndex].uniqueIdentifier == filename {
-                                    conversation.messages[msgIndex].attachments[attIndex].localURL = fileURL
-                                }
-                            }
-                        }
-                        self.conversations[threadId] = conversation
+        } catch {
+            TetherLog("[SMSPlugin] Failed to save an attachment: \(error)")
+            return
+        }
+        DispatchQueue.main.async {
+            var threads = self.conversations[deviceId] ?? [:]
+            for (threadId, var conversation) in threads {
+                var changed = false
+                for m in conversation.messages.indices {
+                    for a in conversation.messages[m].attachments.indices
+                    where conversation.messages[m].attachments[a].uniqueIdentifier == identifier {
+                        conversation.messages[m].attachments[a].localURL = fileURL
+                        changed = true
                     }
                 }
+                if changed { threads[threadId] = conversation }
             }
-        } catch {
-            TetherLog("[SMSPlugin] Failed to write attachment: \(error)")
+            self.conversations[deviceId] = threads
+            if self.attachmentsToOpen.remove(identifier) != nil { NSWorkspace.shared.open(fileURL) }
+        }
+    }
+
+    /// Opens an attachment, fetching it from the phone first if needed.
+    public func openAttachment(_ attachment: SMSAttachment, connection: DeviceConnection?) {
+        let fileURL = Self.attachmentURL(for: attachment.uniqueIdentifier)
+        if FileManager.default.fileExists(atPath: fileURL.path) {
+            NSWorkspace.shared.open(fileURL)
+        } else if let connection {
+            attachmentsToOpen.insert(attachment.uniqueIdentifier)
+            requestAttachment(partId: attachment.partId, uniqueIdentifier: attachment.uniqueIdentifier, connection: connection)
         }
     }
 
@@ -103,7 +135,8 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
     /// The page before the oldest message loaded, growing like desktop KDE
     /// Connect's: as many as are already loaded, at least 50.
     public func requestEarlierMessages(threadId: Int64, connection: DeviceConnection) {
-        let loaded = DispatchQueue.main.sync { conversations[threadId]?.messages ?? [] }
+        let deviceId = connection.peerDeviceInfo?.deviceId ?? ""
+        let loaded = DispatchQueue.main.sync { conversations[deviceId]?[threadId]?.messages ?? [] }
         guard let oldest = loaded.first?.date else {
             requestConversation(threadId: threadId, connection: connection)
             return
@@ -146,7 +179,8 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
         let activeSIMs = connection.peerDeviceInfo
             .flatMap { TetherService.shared.connectivityReportPlugin.subscriptions[$0.deviceId] }
             .map { Set($0.keys) } ?? []
-        let conversationSubId = threadId.flatMap { conversations[$0]?.messages.last(where: { $0.subId != nil })?.subId }
+        let deviceId = connection.peerDeviceInfo?.deviceId ?? ""
+        let conversationSubId = threadId.flatMap { conversations[deviceId]?[$0]?.messages.last(where: { $0.subId != nil })?.subId }
         let chosenSubId = (subId ?? conversationSubId).flatMap { activeSIMs.count > 1 && activeSIMs.contains($0) ? $0 : nil }
         if let chosenSubId {
             body["subID"] = AnyCodable(chosenSubId)
@@ -169,9 +203,9 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
                 read: true
             )
             DispatchQueue.main.async {
-                if var conv = self.conversations[targetThreadId] {
+                if var conv = self.conversations[deviceId]?[targetThreadId] {
                     conv.messages.append(optimisticMessage)
-                    self.conversations[targetThreadId] = conv
+                    self.conversations[deviceId, default: [:]][targetThreadId] = conv
                 }
             }
         }
@@ -185,13 +219,17 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
 
     // MARK: - Internal Message Parsing
 
-    private func handleBatchMessages(packet: NetworkPacket) {
+    private func handleBatchMessages(packet: NetworkPacket, deviceId: String) {
         let rawMessages = packet.objectArray(for: "messages")
         guard !rawMessages.isEmpty else { return }
 
         var parsedMessages: [SMSMessage] = []
         for raw in rawMessages {
-            if let msg = SMSMessage.from(dictionary: raw) {
+            if var msg = SMSMessage.from(dictionary: raw) {
+                for index in msg.attachments.indices {
+                    let url = Self.attachmentURL(for: msg.attachments[index].uniqueIdentifier)
+                    if FileManager.default.fileExists(atPath: url.path) { msg.attachments[index].localURL = url }
+                }
                 parsedMessages.append(msg)
             }
         }
@@ -199,28 +237,53 @@ public final class SMSPlugin: ObservableObject, TetherPlugin, @unchecked Sendabl
         guard !parsedMessages.isEmpty else { return }
 
         DispatchQueue.main.async {
+            // Merged into a copy and published once, not once per message.
+            var threads = self.conversations[deviceId] ?? [:]
             for message in parsedMessages {
                 let threadId = message.threadId
-                var conversation = self.conversations[threadId] ?? SMSConversation(threadId: threadId, addresses: message.addresses)
+                var conversation = threads[threadId] ?? SMSConversation(threadId: threadId, addresses: message.addresses)
 
                 if conversation.addresses.isEmpty && !message.addresses.isEmpty {
                     conversation.addresses = message.addresses
                 }
 
-                // Check for duplicates
-                if !conversation.messages.contains(where: {
-                    $0.body == message.body &&
-                    abs($0.date.timeIntervalSince(message.date)) < 2.0 &&
-                    $0.type == message.type
-                }) {
-                    conversation.messages.append(message)
-                }
+                conversation.messages = Self.merging(message, into: conversation.messages)
 
                 // Sort chronologically
                 conversation.messages.sort(by: { $0.date < $1.date })
-                self.conversations[threadId] = conversation
+                threads[threadId] = conversation
             }
-            TetherLog("[SMSPlugin] Processed \(parsedMessages.count) messages across \(self.conversations.count) threads")
+            self.conversations[deviceId] = threads
+            TetherLog("[SMSPlugin] Processed \(parsedMessages.count) messages across \(threads.count) threads")
         }
+    }
+
+    /// Adds a message the phone reported, or replaces the copy already there.
+    /// Messages are matched by the phone's own ID, so two real texts with the
+    /// same words a second apart both stay. One Tether added while sending
+    /// is replaced when the phone reports it.
+    static func merging(_ message: SMSMessage, into messages: [SMSMessage]) -> [SMSMessage] {
+        var messages = messages
+        if let key = message.phoneKey {
+            if let index = messages.firstIndex(where: { $0.phoneKey == key }) {
+                messages[index] = message
+                return messages
+            }
+            if message.isOutgoing, let index = messages.firstIndex(where: {
+                $0.phoneId == nil && $0.isOutgoing && $0.body == message.body
+                    && abs($0.date.timeIntervalSince(message.date)) < 120
+            }) {
+                messages[index] = message
+                return messages
+            }
+            messages.append(message)
+            return messages
+        }
+        // A phone that doesn't send IDs: same words, same kind, within 2 s.
+        let isCopy = messages.contains {
+            $0.body == message.body && $0.type == message.type && abs($0.date.timeIntervalSince(message.date)) < 2
+        }
+        if !isCopy { messages.append(message) }
+        return messages
     }
 }

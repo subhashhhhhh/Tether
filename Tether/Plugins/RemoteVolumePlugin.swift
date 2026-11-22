@@ -42,6 +42,9 @@ public final class RemoteVolumePlugin: ObservableObject, TetherPlugin, @unchecke
         requestSinks(connection: connection)
     }
 
+    /// Its state belongs to the device, not the connection, and is kept.
+    public func onConnectionReplaced(old: DeviceConnection, new: DeviceConnection) {}
+
     public func onDisconnected(connection: DeviceConnection) {
         guard let deviceId = connection.peerDeviceInfo?.deviceId else { return }
         sinks.removeValue(forKey: deviceId)

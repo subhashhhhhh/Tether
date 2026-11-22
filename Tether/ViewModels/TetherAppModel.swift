@@ -36,6 +36,8 @@ public final class TetherAppModel {
     public var incomingPairRequest: PairRequestViewModel?
     public var selectedDeviceId: String?
     public var isShowingConnectByIP = false
+    /// Set by the menu bar popover; the main window shows it and clears it.
+    var sectionRequest: SectionRequest?
     public var isRunning: Bool = false
     public var notificationAuthStatus: UNAuthorizationStatus = .authorized
 
@@ -121,7 +123,8 @@ public final class TetherAppModel {
             service.mediaControlPlugin.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
             service.remoteVolumePlugin.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
             service.notificationPlugin.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
-            service.contactsPlugin.objectWillChange.map { _ in () }.eraseToAnyPublisher()
+            service.contactsPlugin.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
+            service.clipboardPlugin.objectWillChange.map { _ in () }.eraseToAnyPublisher()
         ]
         // objectWillChange fires before the value lands; hop a runloop turn and
         // coalesce bursts (a single SMS sync can publish hundreds of times).
@@ -227,6 +230,8 @@ public final class TetherAppModel {
                 service.clipboardPlugin.broadcastClipboard(content: text)
             }
         }
+        vm.onCopyReceivedClipboard = { service.clipboardPlugin.copyReceived($0) }
+        vm.onCancelTransfer = { service.sharePlugin.cancelTransfer(id: $0) }
         vm.onSendFiles = { urls in service.sendFiles(urls, to: deviceId) }
         vm.onFindPhone = { service.ringPhone(deviceId) }
         vm.onLockDevice = { service.lockPhone(deviceId) }
@@ -259,6 +264,9 @@ public final class TetherAppModel {
             guard let conn = service.connectedDevices[deviceId] else { return }
             service.smsPlugin.requestAllConversations(connection: conn)
         }
+        vm.onOpenAttachment = { attachment in
+            service.smsPlugin.openAttachment(attachment, connection: service.connectedDevices[deviceId])
+        }
         vm.onOpenThread = { threadId in
             guard let conn = service.connectedDevices[deviceId] else { return }
             service.smsPlugin.requestConversation(threadId: threadId, connection: conn)
@@ -271,8 +279,15 @@ public final class TetherAppModel {
         }
         vm.onSetVolume = { val in service.setPhoneVolume(Int(val * 100), deviceId: deviceId) }
         vm.onMediaAction = { action in service.mediaAction(action, deviceId: deviceId) }
+        vm.onChooseMediaPlayer = { player in
+            guard let conn = service.connection(for: deviceId) else { return }
+            service.mediaControlPlugin.choosePlayer(player, connection: conn)
+        }
         vm.onReplyToNotification = { notification, text in
             service.notificationPlugin.reply(to: notification, text: text)
+        }
+        vm.onNotificationAction = { notification, action in
+            service.notificationPlugin.perform(action, on: notification)
         }
         vm.onDismissNotification = { notification in
             service.notificationPlugin.dismiss(notification)
@@ -282,7 +297,6 @@ public final class TetherAppModel {
     private func updateDevicePluginStates() {
         guard !isMockMode else { return }
         let service = TetherService.shared
-        let threads = service.smsPlugin.conversations.values.sorted { $0.lastDate > $1.lastDate }
 
         for dev in connectedDevices {
             let id = dev.id
@@ -302,16 +316,20 @@ public final class TetherAppModel {
                 .map { PhoneSIM(id: $1.key, number: $0 + 1, networkType: $1.value.shortLabel) }
             update(dev, \.sims, sims)
             update(dev, \.transfers, service.sharePlugin.transfers.filter { $0.deviceId == id })
-            update(dev, \.smsThreads, threads)
+            update(dev, \.smsThreads, (service.smsPlugin.conversations[id] ?? [:]).values.sorted { $0.lastDate > $1.lastDate })
             update(dev, \.contacts, service.contactsPlugin.books[id] ?? ContactBook())
             update(dev, \.commands, service.runCommandPlugin.commands)
             update(dev, \.notifications, service.notificationPlugin.notifications[id] ?? [])
+            update(dev, \.receivedClipboard, service.clipboardPlugin.received[id] ?? [])
+            update(dev, \.appGlyphs, service.notificationPlugin.appGlyphs[id] ?? [:])
 
             let nowPlaying = service.mediaControlPlugin.nowPlaying[id]
             update(dev, \.nowPlayingTitle, nowPlaying?.title)
             update(dev, \.nowPlayingArtist, nowPlaying?.artist)
             update(dev, \.nowPlayingAlbum, nowPlaying?.album)
             update(dev, \.nowPlayingIsPlaying, nowPlaying?.isPlaying ?? false)
+            update(dev, \.mediaPlayers, service.mediaControlPlugin.players[id] ?? [])
+            update(dev, \.currentMediaPlayer, nowPlaying?.player)
             dev.setAlbumArt(service.mediaControlPlugin.albumArt[id])
 
             // Same order as TetherService.setPhoneVolume: the media player's

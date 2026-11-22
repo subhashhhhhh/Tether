@@ -142,6 +142,10 @@ public struct NetworkPacket: Codable, Sendable {
         if let num = raw as? NSNumber {
             return num.intValue
         }
+        // KDE Connect for Android sends some numbers as strings.
+        if let string = raw as? String, let parsed = Int(string.trimmingCharacters(in: .whitespaces)) {
+            return parsed
+        }
         return defaultValue
     }
 
@@ -155,6 +159,10 @@ public struct NetworkPacket: Codable, Sendable {
         }
         if let num = raw as? NSNumber {
             return num.int64Value
+        }
+        // KDE Connect for Android sends a notification's time as a string.
+        if let string = raw as? String, let parsed = Int64(string.trimmingCharacters(in: .whitespaces)) {
+            return parsed
         }
         return defaultValue
     }

@@ -94,6 +94,9 @@ actor PhoneNFSServer {
         var size: Int64 = 0
         var modified = Date()
         var dirty = true
+        /// Counts writes, so an upload knows whether what it sent is still
+        /// the latest. Size alone misses a write that overwrites in place.
+        var generation = 0
         var lastWrite = Date()
         var upload: Task<Void, Error>?
 
@@ -521,7 +524,7 @@ actor PhoneNFSServer {
 
     private func read(_ args: inout XDRReader, _ reply: inout XDRWriter) async throws {
         let path = try readHandle(&args)
-        let offset = Int64(try args.uint64())
+        let offset = Int64(clamping: try args.uint64())
         let count = Int(min(try args.uint32(), 1 << 20))
 
         let data: Data
@@ -634,7 +637,7 @@ actor PhoneNFSServer {
 
     private func write(_ args: inout XDRReader, _ reply: inout XDRWriter) async throws {
         let path = try readHandle(&args)
-        let offset = Int64(try args.uint64())
+        let offset = Int64(clamping: try args.uint64())
         _ = try args.uint32() // count
         _ = try args.uint32() // stable_how: we always answer UNSTABLE and upload on COMMIT
         let data = try args.opaque()
@@ -763,9 +766,9 @@ actor PhoneNFSServer {
 
     private func readdir(_ args: inout XDRReader, _ reply: inout XDRWriter, plus: Bool) async throws {
         let folder = try readHandle(&args)
-        let cookie = Int(try args.uint64())
+        let cookie = Int(clamping: try args.uint64())
         _ = try args.fixed(8) // cookie verifier
-        let dirCount = Int(try args.uint32())
+        let dirCount = Int(clamping: try args.uint32())
         let maxCount = plus ? Int(try args.uint32()) : dirCount
         // Leave room for the reply header and trailing fields.
         let budget = max(maxCount - 512, 1024)
@@ -886,6 +889,7 @@ actor PhoneNFSServer {
 
     private func touch(_ staging: Staged, path: String) {
         staging.dirty = true
+        staging.generation += 1
         staging.lastWrite = Date()
         staging.modified = Date()
         chunks.remove(path: path)
@@ -905,12 +909,16 @@ actor PhoneNFSServer {
             return
         }
         if let running = staging.upload {
+            // That upload may have started before the latest writes; once it
+            // ends, send again if anything is still unsent.
             try await running.value
+            try await flush(path)
             return
         }
         let folder = parent(of: path)
         let real = (path as NSString).deletingLastPathComponent // staged paths are real phone paths
         let descriptor = staging.descriptor, size = staging.size, modified = staging.modified
+        let generation = staging.generation
         let router = router
         let upload = Task {
             _ = try await router.run {
@@ -921,7 +929,7 @@ actor PhoneNFSServer {
         do {
             try await upload.value
             staging.upload = nil
-            if staging.size == size { staging.dirty = false }
+            if staging.generation == generation { staging.dirty = false }
             invalidateListing(folder)
             // Keep the local copy briefly for reads; drop it once idle.
             Task {
