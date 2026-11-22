@@ -10,7 +10,7 @@ import SwiftUI
 import AppKit
 import Observation
 
-public enum DeviceStatus: String, CaseIterable, Sendable {
+enum DeviceStatus: String, CaseIterable, Sendable {
     case connected = "Connected"
     case available = "Nearby"
     case offline = "Offline"
@@ -18,69 +18,86 @@ public enum DeviceStatus: String, CaseIterable, Sendable {
 
 @Observable
 @MainActor
-public final class DeviceViewModel: Identifiable, Hashable {
-    public let id: String
-    public var name: String
-    public var deviceType: DeviceType
-    public var status: DeviceStatus
-    public var lastSeen: Date?
+final class DeviceViewModel: Identifiable, Hashable {
+    let id: String
+    var name: String
+    var deviceType: DeviceType
+    var status: DeviceStatus
+    var lastSeen: Date?
 
-    public var batteryPercent: Int?
-    public var isCharging: Bool
-    public var networkType: String?
-    public var cellularSignalStrength: Int?
+    var batteryPercent: Int?
+    var isCharging: Bool
+    var networkType: String?
+    var cellularSignalStrength: Int?
     /// The phone's SIMs, when it has reported them.
-    public var sims: [PhoneSIM] = []
+    var sims: [PhoneSIM] = []
 
-    public var volume: Float
-    public var isMuted: Bool
-    public var nowPlayingTitle: String?
-    public var nowPlayingArtist: String?
-    public var nowPlayingAlbum: String?
-    public var nowPlayingIsPlaying: Bool
+    var volume: Float
+    var isMuted: Bool
+    var nowPlayingTitle: String?
+    var nowPlayingArtist: String?
+    var nowPlayingAlbum: String?
+    var nowPlayingIsPlaying: Bool
+    /// The phone's media apps, and the one shown.
+    var mediaPlayers: [String] = []
+    var currentMediaPlayer: String?
     /// Decoded once when the bytes change, never in a view body.
-    public private(set) var albumArt: NSImage?
+    private(set) var albumArt: NSImage?
     @ObservationIgnored private var albumArtData: Data?
 
-    public var transfers: [TransferItem]
-    public var smsThreads: [SMSConversation]
+    var transfers: [TransferItem]
+    var smsThreads: [SMSConversation]
+    /// Unread texts across threads, counted once when threads change.
+    var unreadMessageCount = 0
     /// The phone's contacts, for names and photos instead of numbers.
     var contacts = ContactBook()
-    public var commands: [RemoteCommand]
-    public var notifications: [PhoneNotification]
+    var commands: [RemoteCommand]
+    var notifications: [PhoneNotification]
+    /// The last few things the device sent to this Mac's clipboard, newest first.
+    var receivedClipboard: [String] = []
+    /// Each app's status-bar glyph from the phone, by package (or app name
+    /// for glyphs saved before packages were used).
+    var appGlyphs: [String: Data] = [:]
+    /// Bumped by the toolbar's New Message button; the Messages pane starts a draft.
+    var composeRequests = 0
 
     /// True between asking a nearby device to pair and it answering.
-    public var isAwaitingPairing = false
+    var isAwaitingPairing = false
     /// Whether the device accepts lock requests. KDE Connect for Android has no
     /// lock feature, so this is only true for desktops running KDE Connect.
-    public var canLock = false
+    var canLock = false
     /// Whether there's anything to set the volume of: on Android, a media app
     /// with an active session.
-    public var canSetVolume = false
+    var canSetVolume = false
     /// Connected through Tailscale rather than the local network.
-    public var isViaTailscale = false
+    var isViaTailscale = false
 
     // Action handlers injected by TetherAppModel or mocked
-    public var onPing: (() -> Void)?
-    public var onSendClipboard: (() -> Void)?
-    public var onSendFiles: (([URL]) -> Void)?
-    public var onFindPhone: (() -> Void)?
-    public var onLockDevice: (() -> Void)?
-    public var onPair: (() -> Void)?
-    public var onUnpair: (() -> Void)?
-    public var onExecuteCommand: ((String) -> Void)?
-    public var onSaveCommand: ((RemoteCommand) -> Void)?
-    public var onDeleteCommand: ((String) -> Void)?
-    public var onSendSMS: (([String], String, Int64?, Int64?) -> Void)?
-    public var onRefreshMessages: (() -> Void)?
-    public var onOpenThread: ((Int64) -> Void)?
-    public var onLoadEarlierMessages: ((Int64) -> Void)?
-    public var onSetVolume: ((Float) -> Void)?
-    public var onMediaAction: ((String) -> Void)?
-    public var onReplyToNotification: ((PhoneNotification, String) -> Void)?
-    public var onDismissNotification: ((PhoneNotification) -> Void)?
+    @ObservationIgnored var onPing: (() -> Void)?
+    @ObservationIgnored var onSendClipboard: (() -> Void)?
+    @ObservationIgnored var onCopyReceivedClipboard: ((String) -> Void)?
+    @ObservationIgnored var onCancelTransfer: ((UUID) -> Void)?
+    @ObservationIgnored var onSendFiles: (([URL]) -> Void)?
+    @ObservationIgnored var onFindPhone: (() -> Void)?
+    @ObservationIgnored var onLockDevice: (() -> Void)?
+    @ObservationIgnored var onPair: (() -> Void)?
+    @ObservationIgnored var onUnpair: (() -> Void)?
+    @ObservationIgnored var onExecuteCommand: ((String) -> Void)?
+    @ObservationIgnored var onSaveCommand: ((RemoteCommand) -> Void)?
+    @ObservationIgnored var onDeleteCommand: ((String) -> Void)?
+    @ObservationIgnored var onSendSMS: (([String], String, Int64?, Int64?) -> Void)?
+    @ObservationIgnored var onRefreshMessages: (() -> Void)?
+    @ObservationIgnored var onOpenThread: ((Int64) -> Void)?
+    @ObservationIgnored var onOpenAttachment: ((SMSAttachment) -> Void)?
+    @ObservationIgnored var onLoadEarlierMessages: ((Int64) -> Void)?
+    @ObservationIgnored var onSetVolume: ((Float) -> Void)?
+    @ObservationIgnored var onMediaAction: ((String) -> Void)?
+    @ObservationIgnored var onChooseMediaPlayer: ((String?) -> Void)?
+    @ObservationIgnored var onReplyToNotification: ((PhoneNotification, String) -> Void)?
+    @ObservationIgnored var onDismissNotification: ((PhoneNotification) -> Void)?
+    @ObservationIgnored var onNotificationAction: ((PhoneNotification, String) -> Void)?
 
-    public init(
+    init(
         id: String,
         name: String,
         deviceType: DeviceType = .phone,
@@ -118,36 +135,38 @@ public final class DeviceViewModel: Identifiable, Hashable {
         self.nowPlayingIsPlaying = nowPlayingIsPlaying
         self.transfers = transfers
         self.smsThreads = smsThreads
+        self.unreadMessageCount = smsThreads.reduce(0) { $0 + $1.unreadCount }
         self.commands = commands
         self.notifications = notifications
     }
 
-    public nonisolated static func == (lhs: DeviceViewModel, rhs: DeviceViewModel) -> Bool {
+    nonisolated static func == (lhs: DeviceViewModel, rhs: DeviceViewModel) -> Bool {
         lhs.id == rhs.id
     }
 
-    public nonisolated func hash(into hasher: inout Hasher) {
+    nonisolated func hash(into hasher: inout Hasher) {
         hasher.combine(id)
     }
 
-    public var isConnected: Bool { status == .connected }
+    var isConnected: Bool { status == .connected }
 
     func setAlbumArt(_ data: Data?) {
         guard data != albumArtData else { return }
         albumArtData = data
-        albumArt = data.flatMap(NSImage.init(data:))
+        // Drawn at most about 60 pt; decoded once at that size.
+        albumArt = data.flatMap { ImageCache.image($0, maxPixels: 256) }
     }
 
-    public var hasNowPlaying: Bool {
+    var hasNowPlaying: Bool {
         !(nowPlayingTitle ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    public var activeTransferCount: Int {
+    var activeTransferCount: Int {
         transfers.filter { $0.status == .transferring }.count
     }
 
     /// One-line status used under the device name in lists.
-    public var statusLine: String {
+    var statusLine: String {
         switch status {
         case .connected:
             var parts = ["Connected"]
@@ -164,20 +183,22 @@ public final class DeviceViewModel: Identifiable, Hashable {
     }
 
     // Actions
-    public func ping() { onPing?() }
-    public func sendClipboard() { onSendClipboard?() }
-    public func sendFiles(_ urls: [URL]) { onSendFiles?(urls) }
-    public func findMyPhone() { onFindPhone?() }
-    public func lockDevice() { onLockDevice?() }
-    public func pair() {
+    func ping() { onPing?() }
+    func sendClipboard() { onSendClipboard?() }
+    func copyReceivedClipboard(_ text: String) { onCopyReceivedClipboard?(text) }
+    func cancelTransfer(_ id: UUID) { onCancelTransfer?(id) }
+    func sendFiles(_ urls: [URL]) { onSendFiles?(urls) }
+    func findMyPhone() { onFindPhone?() }
+    func lockDevice() { onLockDevice?() }
+    func pair() {
         isAwaitingPairing = true
         onPair?()
     }
-    public func unpair() { onUnpair?() }
-    public func executeCommand(id: String) { onExecuteCommand?(id) }
-    public func saveCommand(_ command: RemoteCommand) { onSaveCommand?(command) }
-    public func deleteCommand(id: String) { onDeleteCommand?(id) }
-    public func sendSMS(to addresses: [String], message: String, threadId: Int64?, subId: Int64? = nil) {
+    func unpair() { onUnpair?() }
+    func executeCommand(id: String) { onExecuteCommand?(id) }
+    func saveCommand(_ command: RemoteCommand) { onSaveCommand?(command) }
+    func deleteCommand(id: String) { onDeleteCommand?(id) }
+    func sendSMS(to addresses: [String], message: String, threadId: Int64?, subId: Int64? = nil) {
         onSendSMS?(addresses, message, threadId, subId)
     }
 
@@ -188,16 +209,54 @@ public final class DeviceViewModel: Identifiable, Hashable {
         if let used = thread?.messages.last(where: { $0.subId.map(ids.contains) ?? false })?.subId {
             return used
         }
-        let lastSent = smsThreads
-            .flatMap(\.messages)
-            .filter { $0.isOutgoing && ($0.subId.map(ids.contains) ?? false) }
-            .max { $0.date < $1.date }
+        // Threads are newest first, so the search stops once no later
+        // thread can hold a newer sent message than the one found.
+        var lastSent: SMSMessage?
+        for thread in smsThreads {
+            if let found = lastSent, thread.lastDate < found.date { break }
+            if let sent = thread.messages.last(where: { $0.isOutgoing && ($0.subId.map(ids.contains) ?? false) }),
+               sent.date > (lastSent?.date ?? .distantPast) {
+                lastSent = sent
+            }
+        }
         return lastSent?.subId ?? sims.first?.id
     }
-    /// The thread's people by name where the phone's contacts know them.
+    /// The thread's people by name where the phone's contacts know them. A
+    /// business chat is named for the business, as the phone shows it.
     func title(for thread: SMSConversation) -> String {
         guard !thread.addresses.isEmpty else { return thread.title }
-        return thread.addresses.map { contacts.contact(for: $0)?.name ?? $0 }.joined(separator: ", ")
+        if let business = thread.addresses.lazy.compactMap(Self.businessName).first { return business }
+        return Self.unique(thread.addresses).map { contacts.contact(for: $0)?.name ?? $0 }.joined(separator: ", ")
+    }
+
+    /// A thread's addresses once each, in order. The phone can list one twice.
+    static func unique(_ addresses: [String]) -> [String] {
+        var seen = Set<String>()
+        return addresses.filter { seen.insert($0).inserted }
+    }
+
+    /// The name in an RCS business address: "bluedart_yftwsowo_agent@rbm.goog"
+    /// is Bluedart. Nil for anything else.
+    static func businessName(_ address: String) -> String? {
+        guard address.hasSuffix("@rbm.goog"), let local = address.split(separator: "@").first else { return nil }
+        var parts = local.split(separator: "_").map(String.init)
+        if parts.last == "agent" { parts.removeLast() }
+        // What's left ends in a random token; the words before it are the name.
+        if parts.count > 1 { parts.removeLast() }
+        let name = parts.joined(separator: " ")
+        return name.isEmpty ? nil : name.capitalized
+    }
+
+    /// Whether a thread is from a business's sender ID rather than a person:
+    /// one address that isn't in the contacts and isn't a phone number.
+    func isSenderID(_ thread: SMSConversation) -> Bool {
+        if thread.addresses.contains(where: { Self.businessName($0) != nil }) { return true }
+        guard thread.addresses.count == 1, let address = thread.addresses.first,
+              contacts.contact(for: address) == nil else { return false }
+        // "AD-HDFCBK-S", "AX-INDANE-S": letters, all capitals, no spaces. A
+        // name the phone sent in place of a number ("Mom") is still a person.
+        return address.contains(where: \.isLetter)
+            && !address.contains(where: { $0.isLowercase || $0.isWhitespace })
     }
 
     /// The contact photo for a one-to-one thread.
@@ -206,24 +265,41 @@ public final class DeviceViewModel: Identifiable, Hashable {
         return contacts.contact(for: address)?.photo
     }
 
-    public func refreshMessages() { onRefreshMessages?() }
-    public func openThread(_ threadId: Int64) { onOpenThread?(threadId) }
-    public func loadEarlierMessages(_ threadId: Int64) { onLoadEarlierMessages?(threadId) }
-    public func setVolume(_ val: Float) { onSetVolume?(val) }
-    public func playPauseMedia() { onMediaAction?("PlayPause") }
-    public func nextMedia() { onMediaAction?("Next") }
-    public func previousMedia() { onMediaAction?("Previous") }
-    public func reply(to notification: PhoneNotification, text: String) { onReplyToNotification?(notification, text) }
-    public func dismiss(_ notification: PhoneNotification) { onDismissNotification?(notification) }
+    func refreshMessages() { onRefreshMessages?() }
+    func openThread(_ threadId: Int64) { onOpenThread?(threadId) }
+    func openAttachment(_ attachment: SMSAttachment) { onOpenAttachment?(attachment) }
+    func loadEarlierMessages(_ threadId: Int64) { onLoadEarlierMessages?(threadId) }
+    func setVolume(_ val: Float) { onSetVolume?(val) }
+    func playPauseMedia() { onMediaAction?("PlayPause") }
+    func chooseMediaPlayer(_ player: String) { onChooseMediaPlayer?(player) }
+    func nextMedia() { onMediaAction?("Next") }
+    func previousMedia() { onMediaAction?("Previous") }
+    func reply(to notification: PhoneNotification, text: String) { onReplyToNotification?(notification, text) }
+    func dismiss(_ notification: PhoneNotification) { onDismissNotification?(notification) }
+    /// The app's glyph for a notification: by package, else by the app
+    /// name it was saved under before.
+    func glyph(for notification: PhoneNotification) -> Data? {
+        // Android's own icons differ per notification; there's no app icon.
+        guard !notification.isFromSystem else { return nil }
+        return appGlyphs[notification.glyphKey] ?? appGlyphs[notification.appName]
+    }
+
+    func perform(_ action: String, on notification: PhoneNotification) { onNotificationAction?(notification, action) }
 }
 
 #if DEBUG
 // MARK: - Mocks for Previews
 
 extension DeviceViewModel {
-    public static func mockConnectedPhone() -> DeviceViewModel {
+    static func mockConnectedPhone() -> DeviceViewModel {
         let now = Date()
-        let alex = SMSConversation(threadId: 101, addresses: ["Alex Rivera"], messages: [
+        let earlier = (0..<12).map { index in
+            SMSMessage(body: ["Morning!", "Did you see the agenda?", "Yes, looks fine", "Room 4 or 6?", "6, the one with the screen",
+                              "Got it", "Bringing the adapter", "Thanks", "Lunch after?", "Sure", "The usual place", "Perfect"][index],
+                       addresses: ["Alex Rivera"], date: now.addingTimeInterval(-3600 * 30 + Double(index) * 120),
+                       type: index % 2 == 0 ? 1 : 2, threadId: 101, read: true)
+        }
+        let alex = SMSConversation(threadId: 101, addresses: ["Alex Rivera"], messages: earlier + [
             SMSMessage(body: "Did the slides come through?", addresses: ["Alex Rivera"], date: now.addingTimeInterval(-3600 * 26), type: 1, threadId: 101, read: true),
             SMSMessage(body: "Yep, opening them now", addresses: ["Alex Rivera"], date: now.addingTimeInterval(-3600 * 25), type: 2, threadId: 101, read: true),
             SMSMessage(body: "Are we still on for 4?", addresses: ["Alex Rivera"], date: now.addingTimeInterval(-240), type: 1, threadId: 101, read: false),
@@ -259,24 +335,25 @@ extension DeviceViewModel {
             commands: RemoteCommand.defaultCommands,
             notifications: [
                 PhoneNotification(id: "n0", deviceId: "mock_phone", appName: "Messages", title: "Northwind", text: "739104 is your Northwind sign-in code. It expires in 10 minutes.", date: now.addingTimeInterval(-30), replyId: nil, isDismissable: true, code: "739104"),
-                PhoneNotification(id: "n1", deviceId: "mock_phone", appName: "WhatsApp", title: "Alex Smith", text: "Are we meeting at 4 PM today?", date: now.addingTimeInterval(-120), replyId: "r1", isDismissable: true),
+                PhoneNotification(id: "n1", deviceId: "mock_phone", appName: "WhatsApp", title: "Alex Smith", text: "Are we meeting at 4 PM today?", date: now.addingTimeInterval(-120), replyId: "r1", isDismissable: true, actions: ["Mark as read", "Mute"]),
                 PhoneNotification(id: "n2", deviceId: "mock_phone", appName: "Gmail", title: "Your order has shipped", text: "Arriving Thursday. Track your package for live updates.", date: now.addingTimeInterval(-1800), replyId: nil, isDismissable: true)
             ]
         )
         phone.canSetVolume = true
         phone.sims = [PhoneSIM(id: 1, number: 1, networkType: "5G"), PhoneSIM(id: 2, number: 2, networkType: "4G")]
+        phone.receivedClipboard = ["Gate B14, boarding 18:40", "https://maps.example.com/trailhead"]
         return phone
     }
 
-    public static func mockConnectedTablet() -> DeviceViewModel {
+    static func mockConnectedTablet() -> DeviceViewModel {
         DeviceViewModel(id: "mock_tablet", name: "Galaxy Tab S9", deviceType: .tablet, status: .connected, batteryPercent: 47, networkType: "Wi-Fi")
     }
 
-    public static func mockAvailablePhone() -> DeviceViewModel {
+    static func mockAvailablePhone() -> DeviceViewModel {
         DeviceViewModel(id: "mock_available", name: "Nothing Phone (2)", deviceType: .phone, status: .available)
     }
 
-    public static func mockOfflinePhone() -> DeviceViewModel {
+    static func mockOfflinePhone() -> DeviceViewModel {
         DeviceViewModel(id: "mock_offline", name: "OnePlus 12", deviceType: .phone, status: .offline, lastSeen: Date().addingTimeInterval(-3600 * 5))
     }
 }

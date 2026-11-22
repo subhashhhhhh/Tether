@@ -6,16 +6,16 @@
 import SwiftUI
 import UserNotifications
 
-public struct SettingsView: View {
+struct SettingsView: View {
     @Bindable var viewModel: SettingsViewModel
 
-    public init(viewModel: SettingsViewModel) {
+    init(viewModel: SettingsViewModel) {
         self.viewModel = viewModel
     }
 
-    public var body: some View {
+    var body: some View {
         TabView {
-            Tab("General", systemImage: "gearshape") {
+            Tab("General", systemImage: "gear") {
                 GeneralSettings(viewModel: viewModel)
             }
             Tab("Devices", systemImage: "iphone.gen3") {
@@ -32,7 +32,11 @@ public struct SettingsView: View {
             }
         }
         .frame(width: 560, height: 460)
-        .onAppear { viewModel.refresh() }
+        .onAppear {
+            viewModel.refresh()
+            DockPresence.windowOpened()
+        }
+        .onDisappear { DockPresence.windowClosed() }
     }
 }
 
@@ -226,8 +230,10 @@ private struct GeneralSettings: View {
     @State private var name = ""
     @AppStorage(MotionPreference.key) private var reduceMotion = false
     @AppStorage(OneTimeCode.autoCopyKey) private var copyCodes = false
+    @AppStorage(NativeNotificationFilter.deferToWhatsAppKey) private var deferToWhatsApp = true
     @AppStorage(CallMediaPauser.settingKey) private var pauseMediaDuringCalls = true
     @AppStorage(CallCard.settingKey) private var showCallCard = true
+    @AppStorage(PhoneNowPlaying.settingKey) private var showPhoneNowPlaying = true
     @AppStorage(AwayLock.settingKey) private var lockWhenPhoneLeaves = false
 
     var body: some View {
@@ -255,6 +261,14 @@ private struct GeneralSettings: View {
                 Toggle(isOn: $copyCodes) {
                     Text("Copy verification codes automatically")
                     Text("When a notification from your phone contains a sign-in code, Tether puts it on the clipboard.")
+                }
+                Toggle(isOn: $deferToWhatsApp) {
+                    Text("Let WhatsApp for Mac show its own alerts")
+                    Text("While WhatsApp is open on this Mac, Tether doesn't show a second banner for the same message. WhatsApp messages still appear in Tether's list.")
+                }
+                Toggle(isOn: $showPhoneNowPlaying) {
+                    Text("Show the phone's music in Now Playing")
+                    Text("What's playing on your phone appears in Control Center and the menu bar's Now Playing, and your Mac's media keys control it.")
                 }
                 Toggle(isOn: $showCallCard) {
                     Text("Show calls in a floating card")
@@ -348,14 +362,11 @@ private struct DevicesSettings: View {
 
             ForEach(viewModel.pairedDevices) { device in
                 Section {
-                    Toggle("Share clipboard", isOn: Binding(
-                        get: { device.isClipboardSyncEnabled },
-                        set: { viewModel.setSync(deviceId: device.deviceId, clipboard: $0, notifications: device.isNotificationSyncEnabled) }
-                    ))
-                    Toggle("Show phone notifications", isOn: Binding(
-                        get: { device.isNotificationSyncEnabled },
-                        set: { viewModel.setSync(deviceId: device.deviceId, clipboard: device.isClipboardSyncEnabled, notifications: $0) }
-                    ))
+                    Toggle(isOn: viewModel.binding(\.isClipboardSyncEnabled, for: device)) {
+                        Text("Send copies to \(device.deviceName) automatically")
+                        Text("When off, use Send Clipboard to send what you copied. What the phone sends always arrives.")
+                    }
+                    Toggle("Show phone notifications", isOn: viewModel.binding(\.isNotificationSyncEnabled, for: device))
                     LabeledContent("Paired", value: device.pairedDate.formatted(date: .abbreviated, time: .omitted))
                     if let lastSeen = device.lastSeenDate {
                         LabeledContent("Last connected", value: lastSeen.formatted(.relative(presentation: .named)))
@@ -372,15 +383,7 @@ private struct DevicesSettings: View {
             }
         }
         .formStyle(.grouped)
-        .confirmationDialog(
-            "Unpair \(deviceToUnpair?.deviceName ?? "device")?",
-            isPresented: Binding(get: { deviceToUnpair != nil }, set: { if !$0 { deviceToUnpair = nil } }),
-            presenting: deviceToUnpair
-        ) { device in
-            Button("Unpair", role: .destructive) { viewModel.unpair(deviceId: device.deviceId) }
-        } message: { device in
-            Text("You'll need to pair again from \(device.deviceName) to reconnect.")
-        }
+        .unpairConfirmation(for: $deviceToUnpair, name: \.deviceName) { viewModel.unpair(deviceId: $0.deviceId) }
     }
 }
 
@@ -388,7 +391,7 @@ private struct DevicesSettings: View {
 
 private struct PermissionsSettings: View {
     @Bindable var viewModel: SettingsViewModel
-    @Environment(\.controlActiveState) private var controlActiveState
+    @Environment(\.appearsActive) private var appearsActive
 
     var body: some View {
         Form {
@@ -430,7 +433,7 @@ private struct PermissionsSettings: View {
             }
         }
         .formStyle(.grouped)
-        .onChange(of: controlActiveState) { viewModel.refresh() }
+        .onChange(of: appearsActive) { viewModel.refresh() }
     }
 
     private var notificationState: PermissionState {
