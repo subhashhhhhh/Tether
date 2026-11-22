@@ -17,6 +17,8 @@ struct OneTimeCodeTests {
         ("Dear customer, OTP 739104 for login to NetBanking. Never share OTP. -HDFC Bank", "739104"),
         ("Your Uber code is 4821. Never share this code.", "4821"),
         ("Instagram: 591 284 is your security code.", "591284"),
+        ("Card ending 1234. OTP is 998877", "998877"),
+        ("OTP 556677 for txn on A/c XX5678. Do not share.", "556677"),
     ])
     func findsCodes(text: String, expected: String) {
         #expect(OneTimeCode.find(in: text) == expected)
@@ -25,6 +27,7 @@ struct OneTimeCodeTests {
     @Test(arguments: [
         "Meeting at 4 PM in room 2045",
         "Your order of Rs 1299 has shipped",
+        "Shipping update: parcel 48213 is out for delivery",
         "Are we still on for 4?",
         "Call me on 9876543210",
         "Payment of ₹ 4500 received. Thank you!",

@@ -17,7 +17,7 @@ As of Tether 1.9.1.
 - [x] Pairing with certificate pinning, so only your phone can connect as your phone
 - [x] A phone that forgot the Mac (after reinstalling KDE Connect, say) can ask to pair again
 - [x] Several phones or tablets at once
-- [x] Notices within about 15 seconds when a phone leaves Wi-Fi or goes out of range
+- [x] Notices within about 35 seconds when a phone leaves Wi-Fi or goes out of range
 
 ### Notifications and calls
 - [x] Phone notifications in macOS Notification Center

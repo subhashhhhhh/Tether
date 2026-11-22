@@ -65,13 +65,13 @@ final class UpdateController {
         guard schedule == nil else { return }
         schedule = Task { [weak self] in
             // Stay out of the login rush.
-            try? await Task.sleep(for: .seconds(30))
+            try? await Task.sleep(for: .seconds(30), tolerance: .seconds(10))
             while !Task.isCancelled {
                 guard let self else { return }
                 if self.checksAutomatically, self.isCheckDue {
                     await self.check(userInitiated: false)
                 }
-                try? await Task.sleep(for: .seconds(3600))
+                try? await Task.sleep(for: .seconds(3600), tolerance: .seconds(300))
             }
         }
     }
